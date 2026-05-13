@@ -107,18 +107,19 @@ type JWTClaims struct {
 
 // LoadConfig 从配置文件和环境变量加载配置
 //
-// 使用优先级: 环境变量 > config.yaml > 代码默认值
+// 使用优先级: 环境变量 > 配置文件 > 代码默认值
 // 环境变量需要以 CDNC_ 为前缀，例如 CDNC_SERVER_PORT
+//
+// configName 指定配置文件名（不含扩展名），例如 "config-manager" 会读取 config-manager.yaml
 //
 // 返回:
 //   - *Config: 加载成功的配置对象
 //   - error: 加载失败时的错误信息
-func LoadConfig() (*Config, error) {
+func LoadConfig(configName string) (*Config, error) {
 	// 设置配置文件的路径和名称
-	viper.SetConfigName("config")
+	viper.SetConfigName(configName)
 	viper.SetConfigType("yaml")
 	viper.AddConfigPath(".")
-	viper.AddConfigPath("./config")
 
 	// 设置环境变量前缀
 	viper.SetEnvPrefix("CDNC")
@@ -215,7 +216,7 @@ func setDefaults() {
 	viper.SetDefault("edge.public_url", "http://localhost:8082")
 	viper.SetDefault("edge.manager.url", "")
 	viper.SetDefault("edge.manager.secret", "veer-edge-secret")
-	viper.SetDefault("edge.origin_base_url", "http://origin:80")
+	viper.SetDefault("edge.origin_base_url", "")
 	viper.SetDefault("edge.cache.ttl_seconds", 300)
 	viper.SetDefault("edge.cache.max_size_mb", 512)
 }

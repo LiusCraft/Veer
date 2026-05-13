@@ -65,22 +65,14 @@ func (s *EdgeServer) Stop() {
 func (s *EdgeServer) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", s.healthHandler)
-	mux.HandleFunc("/", s.rootHandler)
+	mux.HandleFunc("/", s.proxyHandler)
 	return mux
-}
-
-func (s *EdgeServer) rootHandler(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
-		s.proxyHandler(w, r)
-		return
-	}
-	s.healthHandler(w, r)
 }
 
 func (s *EdgeServer) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
-	log.Printf("[edge] %s starting on %s (origin: %s, cache TTL: %ds)",
-		s.cfg.Name, addr, s.cfg.OriginBaseURL, s.cfg.Cache.TTLSeconds)
+	log.Printf("[edge] %s starting on %s (public: %s, cache TTL: %ds)",
+		s.cfg.Name, addr, s.cfg.PublicURL, s.cfg.Cache.TTLSeconds)
 
 	server := &http.Server{
 		Addr:    addr,
@@ -90,10 +82,12 @@ func (s *EdgeServer) Start() error {
 }
 
 func (s *EdgeServer) healthHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	token := r.Header.Get("X-Edge-Secret")
+	if token == "" || token != s.cfg.Manager.Secret {
+		s.proxyHandler(w, r)
 		return
 	}
+
 	stats := s.cache.Stats()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -112,18 +106,23 @@ func (s *EdgeServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		path = "/"
 	}
 
-	domain := r.URL.Query().Get("__d")
-	originURL := s.cfg.OriginBaseURL
-	if domain != "" {
-		if ruleOrigin, ok := s.ruleCache.Get(domain); ok && ruleOrigin != "" {
-			originURL = ruleOrigin
-		}
+	domain, resourcePath := extractDomainAndPath(path)
+	if domain == "" {
+		w.Header().Set("X-ERROR", "no configured")
+		w.Header().Set("X-Edge", s.cfg.Name)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
 	}
 
-	cacheKey := path
-	if domain != "" {
-		cacheKey = domain + ":" + path
+	ruleOrigin, ok := s.ruleCache.Get(domain)
+	if !ok || ruleOrigin == "" {
+		w.Header().Set("X-ERROR", "no configured")
+		w.Header().Set("X-Edge", s.cfg.Name)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
 	}
+
+	cacheKey := domain + ":" + resourcePath
 
 	if entry, ok := s.cache.Get(cacheKey); ok {
 		for k, v := range entry.Headers {
@@ -138,9 +137,9 @@ func (s *EdgeServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry, err := s.fetchFromOrigin(originURL, path)
+	entry, err := s.fetchFromOrigin(ruleOrigin, resourcePath)
 	if err != nil {
-		log.Printf("[edge] origin fetch failed: path=%s err=%v", path, err)
+		log.Printf("[edge] origin fetch failed: path=%s err=%v", resourcePath, err)
 		w.Header().Set("X-Cache", "ERROR")
 		w.Header().Set("X-Edge", s.cfg.Name)
 		http.Error(w, fmt.Sprintf("Bad Gateway: %v", err), http.StatusBadGateway)
@@ -160,6 +159,22 @@ func (s *EdgeServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodGet {
 		w.Write(entry.Body)
 	}
+}
+
+func extractDomainAndPath(fullPath string) (domain, resourcePath string) {
+	fullPath = strings.TrimPrefix(fullPath, "/")
+	parts := strings.SplitN(fullPath, "/", 2)
+	if len(parts) > 0 && parts[0] != "" {
+		domain = parts[0]
+		if len(parts) > 1 && parts[1] != "" {
+			resourcePath = "/" + parts[1]
+		} else {
+			resourcePath = "/"
+		}
+	} else {
+		resourcePath = "/"
+	}
+	return
 }
 
 func (s *EdgeServer) fetchFromOrigin(originBaseURL, path string) (*CacheEntry, error) {

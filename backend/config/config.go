@@ -45,8 +45,8 @@ func SeedData(db *gorm.DB) {
 	db.Model(&models.CdnNode{}).Count(&nodeCount)
 	if nodeCount == 0 {
 		nodes := []models.CdnNode{
-			{Name: "Edge节点-华东", URL: "http://edge-1:8082", Weight: 3, Region: "华东", Status: "active", Latency: 0},
-			{Name: "Edge节点-华南", URL: "http://edge-2:8082", Weight: 2, Region: "华南", Status: "active", Latency: 0},
+			{Name: "Edge节点-华东", URL: "http://localhost:8082", Weight: 3, Region: "华东", Status: "active", Latency: 0},
+			{Name: "Edge节点-华南", URL: "http://localhost:8083", Weight: 2, Region: "华南", Status: "active", Latency: 0},
 		}
 		if result := db.Create(&nodes); result.Error != nil {
 			log.Printf("Failed to seed nodes: %v", result.Error)

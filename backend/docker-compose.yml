@@ -27,6 +27,7 @@ services:
     environment:
       - CDNC_SCHEDULER_HOST=0.0.0.0
       - CDNC_SCHEDULER_PORT=8081
+      - CDNC_SCHEDULER_REFRESH_INTERVAL=10
       - CDNC_DB_PATH=/app/data/veer.db
     depends_on:
       - manager

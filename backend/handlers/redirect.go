@@ -161,12 +161,9 @@ func SchedulerHandler(cache *RuleCache) gin.HandlerFunc {
 
 		remainingPath := strings.TrimLeft(path, "/")
 		targetURL := strings.TrimRight(selectedNode.URL, "/")
+		targetURL += "/" + url.PathEscape(host)
 		if remainingPath != "" {
 			targetURL += "/" + remainingPath
-		}
-
-		if rule.OriginBaseURL != "" {
-			targetURL += "?__d=" + url.QueryEscape(host)
 		}
 
 		clientIP := c.ClientIP()

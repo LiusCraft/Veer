@@ -17,6 +17,6 @@ FROM alpine:3.19
 RUN apk --no-cache add ca-certificates sqlite-libs
 WORKDIR /app
 COPY --from=builder /app/veer .
-COPY config.yaml ./config.yaml
+COPY config-manager.yaml ./config-manager.yaml
 EXPOSE 8080
 CMD ["./veer"]

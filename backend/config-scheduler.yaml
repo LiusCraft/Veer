@@ -1,0 +1,10 @@
+# Veer Scheduler 配置文件
+# 环境变量覆盖: 使用 CDNC_ 前缀，例如 CDNC_SCHEDULER_PORT=9081
+
+scheduler:
+  host: "0.0.0.0"
+  port: 8081
+  refresh_interval: 10
+
+database:
+  path: "./veer.db"

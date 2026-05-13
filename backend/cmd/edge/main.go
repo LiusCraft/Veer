@@ -12,7 +12,7 @@ import (
 )
 
 func main() {
-	cfg, err := config.LoadConfig()
+	cfg, err := config.LoadConfig("config-edge")
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}

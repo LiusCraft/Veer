@@ -11,7 +11,7 @@ import (
 )
 
 func main() {
-	cfg, err := config.LoadConfig()
+	cfg, err := config.LoadConfig("config-scheduler")
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}

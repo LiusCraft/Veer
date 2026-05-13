@@ -21,7 +21,7 @@ import (
 var embeddedFrontend embed.FS
 
 func main() {
-	cfg, err := config.LoadConfig()
+	cfg, err := config.LoadConfig("config-manager")
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
@@ -65,7 +65,7 @@ func main() {
 
 	var hcm *services.HealthCheckManager
 	if cfg.HealthCheck.Enabled {
-		hcm = services.NewHealthCheckManager(db, &cfg.HealthCheck)
+		hcm = services.NewHealthCheckManager(db, &cfg.HealthCheck, cfg.Edge.Manager.Secret)
 		hcm.Start()
 		log.Printf("Health checker started (interval=%ds, threshold=%d)",
 			cfg.HealthCheck.IntervalSeconds, cfg.HealthCheck.FailThreshold)

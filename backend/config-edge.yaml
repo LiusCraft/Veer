@@ -1,0 +1,16 @@
+# Veer Edge 配置文件
+# 环境变量覆盖: 使用 CDNC_ 前缀，例如 CDNC_EDGE_PORT=9082
+
+edge:
+  host: "0.0.0.0"
+  port: 8082
+  name: "edge-1"
+  region: "default"
+  public_url: "http://localhost:8082"
+  manager:
+    url: "http://localhost:8080"
+    secret: "veer-edge-secret"
+  origin_base_url: ""
+  cache:
+    ttl_seconds: 300
+    max_size_mb: 512

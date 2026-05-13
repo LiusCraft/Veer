@@ -14,12 +14,13 @@ import (
 
 // HealthCheckManager 管理所有 CDN 节点的自动健康检测
 type HealthCheckManager struct {
-	db       *gorm.DB
-	cfg      *config.HealthCheckConfig
-	ticker   *time.Ticker
-	stopChan chan struct{}
-	mu       sync.RWMutex
-	running  bool
+	db         *gorm.DB
+	cfg        *config.HealthCheckConfig
+	edgeSecret string
+	ticker     *time.Ticker
+	stopChan   chan struct{}
+	mu         sync.RWMutex
+	running    bool
 }
 
 // NewHealthCheckManager 创建新的健康检测管理器
@@ -27,14 +28,16 @@ type HealthCheckManager struct {
 // 参数:
 //   - db: 数据库连接对象
 //   - cfg: 健康检测配置
+//   - edgeSecret: 边缘节点管理密钥，用于健康探测鉴权
 //
 // 返回:
 //   - *HealthCheckManager: 健康检测管理器实例
-func NewHealthCheckManager(db *gorm.DB, cfg *config.HealthCheckConfig) *HealthCheckManager {
+func NewHealthCheckManager(db *gorm.DB, cfg *config.HealthCheckConfig, edgeSecret string) *HealthCheckManager {
 	return &HealthCheckManager{
-		db:       db,
-		cfg:      cfg,
-		stopChan: make(chan struct{}),
+		db:         db,
+		cfg:        cfg,
+		edgeSecret: edgeSecret,
+		stopChan:   make(chan struct{}),
 	}
 }
 
@@ -145,8 +148,28 @@ func (m *HealthCheckManager) checkNode(node models.CdnNode) {
 		},
 	}
 
+	healthURL := node.URL + "/health"
+	req, err := http.NewRequest("GET", healthURL, nil)
+	if err != nil {
+		// 请求构建失败，增加连续失败计数
+		m.db.Model(&node).Updates(map[string]interface{}{
+			"consecutive_fails": node.ConsecutiveFails + 1,
+		})
+		newFails := node.ConsecutiveFails + 1
+		if m.cfg.FailThreshold > 0 && newFails >= m.cfg.FailThreshold {
+			if node.Status != "inactive" {
+				m.db.Model(&node).Update("status", "inactive")
+				log.Printf("Health check: node %q (%s) marked inactive after %d consecutive failures", node.Name, node.URL, newFails)
+			}
+		}
+		return
+	}
+	if m.edgeSecret != "" {
+		req.Header.Set("X-Edge-Secret", m.edgeSecret)
+	}
+
 	start := time.Now()
-	resp, err := client.Get(node.URL)
+	resp, err := client.Do(req)
 	latency := int(time.Since(start).Milliseconds())
 
 	if err != nil {

@@ -9,6 +9,6 @@ FROM alpine:3.19
 RUN apk --no-cache add ca-certificates
 WORKDIR /app
 COPY --from=builder /app/edge .
-COPY config.yaml ./config.yaml
+COPY config-edge.yaml ./config-edge.yaml
 EXPOSE 8082
 CMD ["./edge"]
