@@ -1,7 +1,14 @@
 package edge
 
 import (
+	"encoding/binary"
+	"fmt"
+	"hash/crc32"
+	"log"
 	"net/http"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"veer/config"
@@ -19,6 +26,46 @@ type CacheEntry struct {
 
 func (e *CacheEntry) IsExpired() bool {
 	return time.Now().After(e.ExpiresAt)
+}
+
+func (e *CacheEntry) CanRevalidate() bool {
+	return e.Headers.Get("ETag") != "" || e.Headers.Get("Last-Modified") != ""
+}
+
+func parseCacheControlTTL(headers http.Header, defaultTTL time.Duration) time.Duration {
+	if cc := headers.Get("Cache-Control"); cc != "" {
+		for _, part := range strings.Split(cc, ",") {
+			part = strings.TrimSpace(part)
+			if strings.HasPrefix(part, "s-maxage=") {
+				if secs, err := strconv.Atoi(part[9:]); err == nil && secs >= 0 {
+					return time.Duration(secs) * time.Second
+				}
+			}
+		}
+		for _, part := range strings.Split(cc, ",") {
+			part = strings.TrimSpace(part)
+			if strings.HasPrefix(part, "max-age=") {
+				if secs, err := strconv.Atoi(part[7:]); err == nil && secs >= 0 {
+					return time.Duration(secs) * time.Second
+				}
+			}
+		}
+		lower := strings.ToLower(cc)
+		if strings.Contains(lower, "no-store") {
+			return 0
+		}
+	}
+
+	if expires := headers.Get("Expires"); expires != "" {
+		if t, err := http.ParseTime(expires); err == nil {
+			remaining := time.Until(t)
+			if remaining > 0 {
+				return remaining
+			}
+		}
+	}
+
+	return defaultTTL
 }
 
 type MemoryCache struct {
@@ -77,7 +124,14 @@ func (c *MemoryCache) Get(key string) (*CacheEntry, bool) {
 }
 
 func (c *MemoryCache) Set(key string, entry *CacheEntry) {
-	entry.ExpiresAt = time.Now().Add(c.ttl)
+	if entry.ExpiresAt.IsZero() || !entry.ExpiresAt.After(time.Now()) {
+		ttl := parseCacheControlTTL(entry.Headers, c.ttl)
+		if ttl > 0 {
+			entry.ExpiresAt = time.Now().Add(ttl)
+		} else {
+			entry.ExpiresAt = time.Now()
+		}
+	}
 	size := int64(len(entry.Body))
 
 	c.mu.Lock()
@@ -93,6 +147,16 @@ func (c *MemoryCache) Set(key string, entry *CacheEntry) {
 
 	c.entries[key] = entry
 	c.curBytes += size
+}
+
+func (c *MemoryCache) GetStale(key string) (*CacheEntry, bool) {
+	c.mu.RLock()
+	entry, ok := c.entries[key]
+	c.mu.RUnlock()
+	if !ok || !entry.CanRevalidate() {
+		return nil, false
+	}
+	return entry, true
 }
 
 func (c *MemoryCache) Delete(key string) {
@@ -164,4 +228,287 @@ func (c *MemoryCache) Len() int {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return len(c.entries)
+}
+
+type RamTier = MemoryCache
+
+func NewRamTier(cfg config.EdgeCacheConfig) *RamTier {
+	l1MB := cfg.MaxSizeMB * 5 / 100
+	if l1MB < 64 {
+		l1MB = 64
+	}
+	if cfg.MaxL1MB > 0 && l1MB > cfg.MaxL1MB {
+		l1MB = cfg.MaxL1MB
+	}
+	l1Cfg := config.EdgeCacheConfig{
+		TTLSeconds: cfg.TTLSeconds,
+		MaxSizeMB:  l1MB,
+	}
+	return NewMemoryCache(l1Cfg)
+}
+
+type TieredCache struct {
+	cfg       config.EdgeCacheConfig
+	ramTier   *RamTier
+	index     *CacheIndex
+	diskR     *DiskReader
+	diskW     *DiskWriter
+	compactor *Compactor
+	cleaner   *Cleaner
+	enabled   bool
+	startedAt time.Time
+}
+
+func NewTieredCache(cfg config.EdgeCacheConfig) (*TieredCache, error) {
+	tc := &TieredCache{
+		cfg:       cfg,
+		ramTier:   NewRamTier(cfg),
+		enabled:   cfg.Disk.Enabled,
+		startedAt: time.Now(),
+	}
+
+	if cfg.Disk.Enabled {
+		tc.index = NewCacheIndex(cfg.Disk.Index, cfg.Disk.Index.SparseMaxEntries)
+
+		reader, err := NewDiskReader(cfg.Disk)
+		if err != nil {
+			return nil, fmt.Errorf("create disk reader: %w", err)
+		}
+		tc.diskR = reader
+
+		writer, err := NewDiskWriter(cfg.Disk, tc.index)
+		if err != nil {
+			reader.Stop()
+			return nil, fmt.Errorf("create disk writer: %w", err)
+		}
+		tc.diskW = writer
+
+		tc.cleaner = NewCleaner(tc.index, time.Minute)
+		tc.cleaner.Start()
+
+		if cfg.Disk.Compaction.Enabled {
+			tc.compactor = NewCompactor(cfg.Disk, tc.diskR, tc.diskW, tc.index)
+			tc.compactor.Start()
+		}
+
+		if err := tc.rebuildIndex(); err != nil {
+			reader.Stop()
+			writer.Stop()
+			return nil, fmt.Errorf("rebuild index: %w", err)
+		}
+	}
+
+	return tc, nil
+}
+
+func (tc *TieredCache) Get(key string) (*CacheEntry, bool) {
+	if entry, ok := tc.ramTier.Get(key); ok {
+		return entry, true
+	}
+
+	if !tc.enabled {
+		return nil, false
+	}
+
+	keyHash := ComputeKeyHash(key)
+	if !tc.index.BloomCheck(keyHash) {
+		return nil, false
+	}
+
+	loc, ok := tc.index.Lookup(keyHash)
+	if !ok {
+		return nil, false
+	}
+
+	if loc.ExpiresAt > 0 && time.Now().UnixNano() > loc.ExpiresAt {
+		tc.index.Remove(keyHash)
+		return nil, false
+	}
+
+	entry, err := tc.diskR.Read(loc, key)
+	if err != nil {
+		tc.index.Remove(keyHash)
+		return nil, false
+	}
+
+	tc.ramTier.Set(key, entry)
+
+	return entry, true
+}
+
+func (tc *TieredCache) Set(key string, entry *CacheEntry) {
+	tc.ramTier.Set(key, entry)
+
+	if !tc.enabled {
+		return
+	}
+
+	keyHash := ComputeKeyHash(key)
+	tc.index.Add(keyHash, cacheLocation{
+		ExpiresAt: entry.ExpiresAt.UnixNano(),
+		CachedAt:  uint32(entry.CachedAt.Unix()),
+	})
+
+	if err := tc.diskW.Write(key, entry); err != nil {
+	}
+}
+
+func (tc *TieredCache) Delete(key string) {
+	tc.ramTier.Delete(key)
+	if tc.enabled {
+		tc.index.Remove(ComputeKeyHash(key))
+	}
+}
+
+func (tc *TieredCache) Stats() map[string]interface{} {
+	stats := tc.ramTier.Stats()
+	if tc.enabled {
+		stats["disk_enabled"] = true
+		stats["disk_segments"] = tc.diskR.SegmentCount()
+		stats["disk_writer_closed"] = tc.diskW.IsClosed()
+		indexStats := tc.index.Stats()
+		for k, v := range indexStats {
+			stats[k] = v
+		}
+	} else {
+		stats["disk_enabled"] = false
+	}
+	return stats
+}
+
+func (tc *TieredCache) Stop() {
+	if tc.enabled {
+		if tc.compactor != nil {
+			tc.compactor.Stop()
+		}
+		if tc.cleaner != nil {
+			tc.cleaner.Stop()
+		}
+		if tc.diskW != nil {
+			tc.diskW.Stop()
+		}
+		if tc.diskR != nil {
+			tc.diskR.Stop()
+		}
+	}
+	tc.ramTier.Stop()
+}
+
+func (tc *TieredCache) Len() int {
+	return tc.ramTier.Len()
+}
+
+func (tc *TieredCache) GetStale(key string) (*CacheEntry, bool) {
+	return tc.ramTier.GetStale(key)
+}
+
+func (tc *TieredCache) rebuildIndex() error {
+	for _, seg := range tc.diskR.Segments() {
+		f, err := os.Open(seg.Path)
+		if err != nil {
+			continue
+		}
+
+		if seg.ID == 0 {
+			if tc.cfg.Disk.Debug {
+				log.Printf("[edge:cache] rebuild: scanning active.dat (size=%d)", seg.FileSize)
+			}
+			tc.rebuildActiveIndex(f)
+			f.Close()
+			continue
+		}
+
+		sh, err := ReadSegmentHeader(f)
+		if err != nil {
+			f.Close()
+			continue
+		}
+
+		fi, err := f.Stat()
+		if err != nil {
+			f.Close()
+			continue
+		}
+
+		indexes, err := ReadEntryIndexTable(f, fi.Size(), sh.Entries)
+		f.Close()
+		if err != nil {
+			continue
+		}
+
+		for _, idx := range indexes {
+			tc.index.Add(idx.KeyHash, cacheLocation{
+				SegmentID:  seg.ID,
+				BodyOffset: idx.BodyOffset,
+				BodyLen:    idx.BodyLen,
+			})
+		}
+	}
+
+	if tc.cfg.Disk.Debug {
+		stats := tc.index.Stats()
+		log.Printf("[edge:cache] rebuild done: bloom=%d sparse=%d/%d",
+			stats["bloom_entries"], stats["sparse_entries"], stats["sparse_max"])
+	}
+	return nil
+}
+
+func (tc *TieredCache) rebuildActiveIndex(f *os.File) {
+	sh, err := ReadSegmentHeader(f)
+	if err != nil {
+		if tc.cfg.Disk.Debug {
+			log.Printf("[edge:cache] rebuild: read header failed: %v", err)
+		}
+		return
+	}
+
+	var count int
+	offset := int64(sh.DataOffset)
+	for {
+		data := make([]byte, EntryHeaderSize)
+		if _, err := f.ReadAt(data, offset); err != nil {
+			break
+		}
+
+		bodyLen := int(binary.BigEndian.Uint32(data[6:10]))
+		keyLen := int(binary.BigEndian.Uint16(data[10:12]))
+		contentTypeLen := int(binary.BigEndian.Uint16(data[24:26]))
+		headersLen := int(binary.BigEndian.Uint16(data[26:28]))
+		totalSize := EntryHeaderSize + keyLen + contentTypeLen + headersLen + bodyLen
+
+		if totalSize <= EntryHeaderSize {
+			break
+		}
+
+		entry := make([]byte, totalSize)
+		if _, err := f.ReadAt(entry, offset); err != nil {
+			break
+		}
+
+		expectedCRC := binary.BigEndian.Uint32(entry[0:4])
+		if crc32.ChecksumIEEE(entry[4:]) != expectedCRC {
+			break
+		}
+
+		expiresAt := int64(binary.BigEndian.Uint64(data[12:20]))
+		cachedAt := binary.BigEndian.Uint32(data[20:24])
+		key := string(entry[EntryHeaderSize : EntryHeaderSize+keyLen])
+		keyHash := ComputeKeyHash(key)
+
+		tc.index.Add(keyHash, cacheLocation{
+			SegmentID:  0,
+			BodyOffset: uint64(offset),
+			BodyLen:    uint32(totalSize),
+			ExpiresAt:  expiresAt,
+			CachedAt:   cachedAt,
+		})
+		count++
+
+		offset += int64(totalSize)
+	}
+
+	if tc.cfg.Disk.Debug {
+		log.Printf("[edge:cache] rebuild: active.dat scanned %d entries from offset %d to %d",
+			count, sh.DataOffset, offset)
+	}
 }

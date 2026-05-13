@@ -119,19 +119,22 @@ func checkDomainUnique(db *gorm.DB, domain string, excludeID uint) bool {
 func CreateRule(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
-			Name          string `json:"name"`
-			Description   string `json:"description"`
-			Enabled       *bool  `json:"enabled"`
-			RuleType      string `json:"rule_type"`
-			Domain        string `json:"domain"`
-			Strategy      string `json:"strategy"`
-			NodeIDs       string `json:"node_ids"`
-			OriginBaseURL string `json:"origin_base_url"`
-			MatchType     string `json:"match_type"`
-			SourcePath    string `json:"source_path"`
-			TargetHost    string `json:"target_host"`
-			TargetPath    string `json:"target_path"`
-			RedirectCode  int    `json:"redirect_code"`
+			Name                 string `json:"name"`
+			Description          string `json:"description"`
+			Enabled              *bool  `json:"enabled"`
+			RuleType             string `json:"rule_type"`
+			Domain               string `json:"domain"`
+			Strategy             string `json:"strategy"`
+			NodeIDs              string `json:"node_ids"`
+			OriginBaseURL        string `json:"origin_base_url"`
+			MatchType            string `json:"match_type"`
+			SourcePath           string `json:"source_path"`
+			TargetHost           string `json:"target_host"`
+			TargetPath           string `json:"target_path"`
+			RedirectCode         int    `json:"redirect_code"`
+			CacheTTLSeconds      *int   `json:"cache_ttl_seconds"`
+			CacheControlOverride string `json:"cache_control_override"`
+			BypassCache          bool   `json:"bypass_cache"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -187,6 +190,9 @@ func CreateRule(db *gorm.DB) gin.HandlerFunc {
 			rule.Strategy = body.Strategy
 			rule.NodeIDs = body.NodeIDs
 			rule.OriginBaseURL = body.OriginBaseURL
+			rule.CacheTTLSeconds = body.CacheTTLSeconds
+			rule.CacheControlOverride = body.CacheControlOverride
+			rule.BypassCache = body.BypassCache
 		} else {
 			if body.MatchType == "" {
 				body.MatchType = "prefix"
@@ -240,19 +246,22 @@ func UpdateRule(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		var body struct {
-			Name          *string `json:"name"`
-			Description   *string `json:"description"`
-			Enabled       *bool   `json:"enabled"`
-			Priority      *int    `json:"priority"`
-			Domain        *string `json:"domain"`
-			Strategy      *string `json:"strategy"`
-			NodeIDs       *string `json:"node_ids"`
-			OriginBaseURL *string `json:"origin_base_url"`
-			MatchType     *string `json:"match_type"`
-			SourcePath    *string `json:"source_path"`
-			TargetHost    *string `json:"target_host"`
-			TargetPath    *string `json:"target_path"`
-			RedirectCode  *int    `json:"redirect_code"`
+			Name                 *string `json:"name"`
+			Description          *string `json:"description"`
+			Enabled              *bool   `json:"enabled"`
+			Priority             *int    `json:"priority"`
+			Domain               *string `json:"domain"`
+			Strategy             *string `json:"strategy"`
+			NodeIDs              *string `json:"node_ids"`
+			OriginBaseURL        *string `json:"origin_base_url"`
+			MatchType            *string `json:"match_type"`
+			SourcePath           *string `json:"source_path"`
+			TargetHost           *string `json:"target_host"`
+			TargetPath           *string `json:"target_path"`
+			RedirectCode         *int    `json:"redirect_code"`
+			CacheTTLSeconds      *int    `json:"cache_ttl_seconds"`
+			CacheControlOverride *string `json:"cache_control_override"`
+			BypassCache          *bool   `json:"bypass_cache"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -305,6 +314,15 @@ func UpdateRule(db *gorm.DB) gin.HandlerFunc {
 					return
 				}
 				rule.OriginBaseURL = *body.OriginBaseURL
+			}
+			if body.CacheTTLSeconds != nil {
+				rule.CacheTTLSeconds = body.CacheTTLSeconds
+			}
+			if body.CacheControlOverride != nil {
+				rule.CacheControlOverride = *body.CacheControlOverride
+			}
+			if body.BypassCache != nil {
+				rule.BypassCache = *body.BypassCache
 			}
 		} else {
 			if body.Domain != nil {

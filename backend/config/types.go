@@ -94,8 +94,37 @@ type EdgeManagerConfig struct {
 
 // EdgeCacheConfig 边缘节点缓存配置
 type EdgeCacheConfig struct {
-	TTLSeconds int `mapstructure:"ttl_seconds" default:"300"`
-	MaxSizeMB  int `mapstructure:"max_size_mb" default:"512"`
+	TTLSeconds int                 `mapstructure:"ttl_seconds" default:"300"`
+	MaxSizeMB  int                 `mapstructure:"max_size_mb" default:"512"`
+	MaxL1MB    int                 `mapstructure:"max_l1_mb" default:"4096"`
+	Disk       EdgeDiskCacheConfig `mapstructure:"disk"`
+}
+
+// EdgeDiskCacheConfig 磁盘缓存层配置
+type EdgeDiskCacheConfig struct {
+	Enabled         bool                     `mapstructure:"enabled" default:"false"`
+	Path            string                   `mapstructure:"path" default:"./cache"`
+	MaxSizeGB       int                      `mapstructure:"max_size_gb" default:"500"`
+	SegmentSizeMB   int                      `mapstructure:"segment_size_mb" default:"512"`
+	WriteBufferKB   int                      `mapstructure:"write_buffer_kb" default:"4096"`
+	FlushIntervalMS int                      `mapstructure:"flush_interval_ms" default:"100"`
+	Debug           bool                     `mapstructure:"debug" default:"false"`
+	Compaction      EdgeDiskCompactionConfig `mapstructure:"compaction"`
+	Index           EdgeDiskIndexConfig      `mapstructure:"index"`
+}
+
+// EdgeDiskCompactionConfig Compaction 配置
+type EdgeDiskCompactionConfig struct {
+	Enabled         bool    `mapstructure:"enabled" default:"true"`
+	Watermark       float64 `mapstructure:"watermark" default:"0.85"`
+	IntervalMinutes int     `mapstructure:"interval_minutes" default:"30"`
+	MaxSegments     int     `mapstructure:"max_segments" default:"200"`
+}
+
+// EdgeDiskIndexConfig 索引配置
+type EdgeDiskIndexConfig struct {
+	BloomBitsPerEntry int `mapstructure:"bloom_bits_per_entry" default:"16"`
+	SparseMaxEntries  int `mapstructure:"sparse_max_entries" default:"10000000"`
 }
 
 // JWTClaims JWT 令牌中的声明结构
@@ -151,6 +180,20 @@ func LoadConfig(configName string) (*Config, error) {
 	_ = viper.BindEnv("edge.origin_base_url", "CDNC_EDGE_ORIGIN_BASE_URL")
 	_ = viper.BindEnv("edge.cache.ttl_seconds", "CDNC_EDGE_CACHE_TTL_SECONDS")
 	_ = viper.BindEnv("edge.cache.max_size_mb", "CDNC_EDGE_CACHE_MAX_SIZE_MB")
+	_ = viper.BindEnv("edge.cache.max_l1_mb", "CDNC_EDGE_CACHE_MAX_L1_MB")
+	_ = viper.BindEnv("edge.cache.disk.enabled", "CDNC_EDGE_CACHE_DISK_ENABLED")
+	_ = viper.BindEnv("edge.cache.disk.path", "CDNC_EDGE_CACHE_DISK_PATH")
+	_ = viper.BindEnv("edge.cache.disk.max_size_gb", "CDNC_EDGE_CACHE_DISK_MAX_SIZE_GB")
+	_ = viper.BindEnv("edge.cache.disk.segment_size_mb", "CDNC_EDGE_CACHE_DISK_SEGMENT_SIZE_MB")
+	_ = viper.BindEnv("edge.cache.disk.write_buffer_kb", "CDNC_EDGE_CACHE_DISK_WRITE_BUFFER_KB")
+	_ = viper.BindEnv("edge.cache.disk.flush_interval_ms", "CDNC_EDGE_CACHE_DISK_FLUSH_INTERVAL_MS")
+	_ = viper.BindEnv("edge.cache.disk.debug", "CDNC_EDGE_CACHE_DISK_DEBUG")
+	_ = viper.BindEnv("edge.cache.disk.compaction.enabled", "CDNC_EDGE_CACHE_DISK_COMPACTION_ENABLED")
+	_ = viper.BindEnv("edge.cache.disk.compaction.watermark", "CDNC_EDGE_CACHE_DISK_COMPACTION_WATERMARK")
+	_ = viper.BindEnv("edge.cache.disk.compaction.interval_minutes", "CDNC_EDGE_CACHE_DISK_COMPACTION_INTERVAL_MINUTES")
+	_ = viper.BindEnv("edge.cache.disk.compaction.max_segments", "CDNC_EDGE_CACHE_DISK_COMPACTION_MAX_SEGMENTS")
+	_ = viper.BindEnv("edge.cache.disk.index.bloom_bits_per_entry", "CDNC_EDGE_CACHE_DISK_INDEX_BLOOM_BITS_PER_ENTRY")
+	_ = viper.BindEnv("edge.cache.disk.index.sparse_max_entries", "CDNC_EDGE_CACHE_DISK_INDEX_SPARSE_MAX_ENTRIES")
 
 	// 设置默认值
 	setDefaults()
@@ -219,6 +262,20 @@ func setDefaults() {
 	viper.SetDefault("edge.origin_base_url", "")
 	viper.SetDefault("edge.cache.ttl_seconds", 300)
 	viper.SetDefault("edge.cache.max_size_mb", 512)
+	viper.SetDefault("edge.cache.max_l1_mb", 4096)
+	viper.SetDefault("edge.cache.disk.enabled", false)
+	viper.SetDefault("edge.cache.disk.path", "./cache")
+	viper.SetDefault("edge.cache.disk.max_size_gb", 500)
+	viper.SetDefault("edge.cache.disk.segment_size_mb", 512)
+	viper.SetDefault("edge.cache.disk.write_buffer_kb", 4096)
+	viper.SetDefault("edge.cache.disk.flush_interval_ms", 100)
+	viper.SetDefault("edge.cache.disk.debug", false)
+	viper.SetDefault("edge.cache.disk.compaction.enabled", true)
+	viper.SetDefault("edge.cache.disk.compaction.watermark", 0.85)
+	viper.SetDefault("edge.cache.disk.compaction.interval_minutes", 30)
+	viper.SetDefault("edge.cache.disk.compaction.max_segments", 200)
+	viper.SetDefault("edge.cache.disk.index.bloom_bits_per_entry", 16)
+	viper.SetDefault("edge.cache.disk.index.sparse_max_entries", 10000000)
 }
 
 // GetExpiryDuration 返回 JWT 过期时长（作为 time.Duration）

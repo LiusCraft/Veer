@@ -11,8 +11,11 @@ import (
 )
 
 type EdgeRule struct {
-	Domain        string `json:"domain"`
-	OriginBaseURL string `json:"origin_base_url"`
+	Domain               string `json:"domain"`
+	OriginBaseURL        string `json:"origin_base_url"`
+	CacheTTLSeconds      *int   `json:"cache_ttl_seconds,omitempty"`
+	CacheControlOverride string `json:"cache_control_override,omitempty"`
+	BypassCache          bool   `json:"bypass_cache"`
 }
 
 type EdgeRegisterRequest struct {
@@ -121,8 +124,11 @@ func ListEdgeRulesHandler(db *gorm.DB, cfg *config.Config) gin.HandlerFunc {
 		edgeRules := make([]EdgeRule, 0, len(rules))
 		for _, r := range rules {
 			edgeRules = append(edgeRules, EdgeRule{
-				Domain:        r.Domain,
-				OriginBaseURL: r.OriginBaseURL,
+				Domain:               r.Domain,
+				OriginBaseURL:        r.OriginBaseURL,
+				CacheTTLSeconds:      r.CacheTTLSeconds,
+				CacheControlOverride: r.CacheControlOverride,
+				BypassCache:          r.BypassCache,
 			})
 		}
 

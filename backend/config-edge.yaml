@@ -14,3 +14,20 @@ edge:
   cache:
     ttl_seconds: 300
     max_size_mb: 512
+    max_l1_mb: 4096
+    disk:
+      enabled: true
+      path: "./data/cache/veer"
+      max_size_gb: 500
+      segment_size_mb: 512
+      write_buffer_kb: 4096
+      flush_interval_ms: 100
+      debug: true
+      compaction:
+        enabled: true
+        watermark: 0.85
+        interval_minutes: 30
+        max_segments: 200
+      index:
+        bloom_bits_per_entry: 16
+        sparse_max_entries: 10000000

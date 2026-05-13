@@ -31,8 +31,11 @@ type registerResponse struct {
 }
 
 type rulesResponseData struct {
-	Domain        string `json:"domain"`
-	OriginBaseURL string `json:"origin_base_url"`
+	Domain               string `json:"domain"`
+	OriginBaseURL        string `json:"origin_base_url"`
+	CacheTTLSeconds      *int   `json:"cache_ttl_seconds,omitempty"`
+	CacheControlOverride string `json:"cache_control_override,omitempty"`
+	BypassCache          bool   `json:"bypass_cache"`
 }
 
 type rulesResponse struct {
@@ -162,12 +165,17 @@ func SyncRules(srv *EdgeServer) error {
 		return fmt.Errorf("failed to sync rules: %w", err)
 	}
 
-	domainMap := make(map[string]string, len(rules))
+	ruleMap := make(map[string]domainRule, len(rules))
 	for _, r := range rules {
-		domainMap[r.Domain] = r.OriginBaseURL
+		ruleMap[r.Domain] = domainRule{
+			originBaseURL:        r.OriginBaseURL,
+			cacheTTLSeconds:      r.CacheTTLSeconds,
+			cacheControlOverride: r.CacheControlOverride,
+			bypassCache:          r.BypassCache,
+		}
 	}
 
-	srv.ruleCache.Update(domainMap)
+	srv.ruleCache.Update(ruleMap)
 	log.Printf("[edge] synced %d domain->origin mappings from manager", len(rules))
 
 	return nil
