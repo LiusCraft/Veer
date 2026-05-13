@@ -59,8 +59,8 @@ export const nodesApi = {
 
 // ===== Redirect Rules API =====
 export const rulesApi = {
-  /** Get all redirect rules */
-  list: () => api.get('/rules'),
+  /** Get all redirect rules (optional filter by rule_type/enabled) */
+  list: (params = {}) => api.get('/rules', { params }),
 
   /** Create a new redirect rule */
   create: (data) => api.post('/rules', data),
@@ -73,6 +73,12 @@ export const rulesApi = {
 
   /** Batch delete redirect rules */
   batchDelete: (ids) => api.delete('/rules/batch', { data: { ids } }),
+
+  /** Batch enable/disable rules */
+  batchToggle: (ids, enabled) => api.put('/rules/batch/toggle', { ids, enabled }),
+
+  /** Reorder rules by priority */
+  reorder: (ids, ruleType) => api.put('/rules/reorder', { ids, rule_type: ruleType }),
 }
 
 // ===== Statistics API =====

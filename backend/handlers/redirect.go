@@ -5,7 +5,6 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -40,18 +39,16 @@ func getRoundRobinCounter(ruleID uint) *int64 {
 	return &zero
 }
 
-// RuleCache 缓存 domain → RedirectRule 的映射，定时从 DB 刷新
 type RuleCache struct {
 	mu    sync.RWMutex
-	rules map[string]models.RedirectRule
+	rules map[string][]models.RedirectRule
 	nodes map[uint]models.CdnNode
 	db    *gorm.DB
 }
 
-// NewRuleCache 创建并启动规则缓存
 func NewRuleCache(db *gorm.DB, intervalSeconds int) *RuleCache {
 	c := &RuleCache{
-		rules: make(map[string]models.RedirectRule),
+		rules: make(map[string][]models.RedirectRule),
 		nodes: make(map[uint]models.CdnNode),
 		db:    db,
 	}
@@ -70,7 +67,7 @@ func NewRuleCache(db *gorm.DB, intervalSeconds int) *RuleCache {
 
 func (c *RuleCache) refresh() {
 	var rules []models.RedirectRule
-	if err := c.db.Find(&rules).Error; err != nil {
+	if err := c.db.Where("enabled = ?", true).Find(&rules).Error; err != nil {
 		log.Printf("[scheduler] failed to refresh rules: %v", err)
 		return
 	}
@@ -86,10 +83,10 @@ func (c *RuleCache) refresh() {
 		nodeMap[n.ID] = n
 	}
 
-	ruleMap := make(map[string]models.RedirectRule, len(rules))
+	ruleMap := make(map[string][]models.RedirectRule)
 	for _, r := range rules {
 		if r.Domain != "" {
-			ruleMap[r.Domain] = r
+			ruleMap[r.Domain] = append(ruleMap[r.Domain], r)
 		}
 	}
 
@@ -101,15 +98,13 @@ func (c *RuleCache) refresh() {
 	log.Printf("[scheduler] rule cache refreshed: %d rules, %d nodes", len(rules), len(allNodes))
 }
 
-// Lookup 根据域名查找规则
-func (c *RuleCache) Lookup(domain string) (models.RedirectRule, bool) {
+func (c *RuleCache) Lookup(domain string) ([]models.RedirectRule, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	rule, ok := c.rules[domain]
-	return rule, ok
+	rules, ok := c.rules[domain]
+	return rules, ok
 }
 
-// GetNodes 批量获取节点
 func (c *RuleCache) GetNodes(ids []uint) []models.CdnNode {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -122,13 +117,33 @@ func (c *RuleCache) GetNodes(ids []uint) []models.CdnNode {
 	return result
 }
 
-// SchedulerHandler 处理调度请求 — 根据 Host 域名匹配规则并 302 重定向
-//
-// 工作流:
-//  1. 从 Host 头提取域名
-//  2. 从缓存查找匹配的 RedirectRule
-//  3. 根据策略选择 CDN 节点
-//  4. 拼接目标 URL 后 302 重定向
+func matchPath(sourcePath, requestPath, matchType string) bool {
+	switch matchType {
+	case "exact":
+		return sourcePath == requestPath
+	case "prefix":
+		return strings.HasPrefix(requestPath, sourcePath)
+	case "regex":
+		return strings.HasPrefix(requestPath, sourcePath)
+	default:
+		return false
+	}
+}
+
+func resolveTargetPath(tmpl string, requestPath, sourcePrefix string) string {
+	if tmpl == "" {
+		return requestPath
+	}
+	if strings.Contains(tmpl, "$1") {
+		suffix := strings.TrimPrefix(requestPath, sourcePrefix)
+		if suffix == "" {
+			suffix = "/"
+		}
+		return strings.ReplaceAll(tmpl, "$1", suffix)
+	}
+	return tmpl
+}
+
 func SchedulerHandler(cache *RuleCache) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		host := c.GetHeader("X-Forwarded-Host")
@@ -137,58 +152,116 @@ func SchedulerHandler(cache *RuleCache) gin.HandlerFunc {
 		}
 		host = strings.Split(host, ":")[0]
 
-		path := c.Request.URL.Path
+		requestPath := c.Request.URL.Path
 
-		rule, ok := cache.Lookup(host)
-		if !ok {
+		rules, ok := cache.Lookup(host)
+		if !ok || len(rules) == 0 {
 			c.JSON(http.StatusNotFound, gin.H{"error": "no rule found for domain: " + host})
 			return
 		}
 
-		var nodeIDs []uint
-		if err := json.Unmarshal([]byte(rule.NodeIDs), &nodeIDs); err != nil || len(nodeIDs) == 0 {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "invalid node configuration"})
-			return
-		}
-
-		nodes := cache.GetNodes(nodeIDs)
-		if len(nodes) == 0 {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "no active nodes available"})
-			return
-		}
-
-		selectedNode := selectNode(nodes, rule.Strategy, rule.ID)
-
-		remainingPath := strings.TrimLeft(path, "/")
-		targetURL := strings.TrimRight(selectedNode.URL, "/")
-		targetURL += "/" + url.PathEscape(host)
-		if remainingPath != "" {
-			targetURL += "/" + remainingPath
-		}
-
-		clientIP := c.ClientIP()
-		userAgent := c.Request.UserAgent()
-
-		go func() {
-			log := models.AccessLog{
-				Domain:     host,
-				Path:       remainingPath,
-				NodeID:     selectedNode.ID,
-				NodeName:   selectedNode.Name,
-				TargetURL:  targetURL,
-				ClientIP:   clientIP,
-				UserAgent:  userAgent,
-				StatusCode: http.StatusFound,
-				CreatedAt:  time.Now(),
+		for _, rule := range rules {
+			if !rule.Enabled {
+				continue
 			}
-			cache.db.Create(&log)
-			cache.db.Model(&rule).UpdateColumn("hit_count", gorm.Expr("hit_count + 1"))
-		}()
 
-		c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
-		c.Header("Vary", "Host")
+			if rule.RuleType == "domain_routing" {
+				var nodeIDs []uint
+				if err := json.Unmarshal([]byte(rule.NodeIDs), &nodeIDs); err != nil || len(nodeIDs) == 0 {
+					continue
+				}
 
-		c.Redirect(http.StatusFound, targetURL)
+				nodes := cache.GetNodes(nodeIDs)
+				if len(nodes) == 0 {
+					continue
+				}
+
+				selectedNode := selectNode(nodes, rule.Strategy, rule.ID)
+
+				remainingPath := strings.TrimLeft(requestPath, "/")
+				targetURL := strings.TrimRight(selectedNode.URL, "/")
+				targetURL += "/" + host
+				if remainingPath != "" {
+					targetURL += "/" + remainingPath
+				}
+
+				clientIP := c.ClientIP()
+				userAgent := c.Request.UserAgent()
+
+				go func() {
+					log := models.AccessLog{
+						Domain:     host,
+						Path:       requestPath,
+						NodeID:     selectedNode.ID,
+						NodeName:   selectedNode.Name,
+						TargetURL:  targetURL,
+						ClientIP:   clientIP,
+						UserAgent:  userAgent,
+						StatusCode: http.StatusFound,
+						CreatedAt:  time.Now(),
+					}
+					cache.db.Create(&log)
+					cache.db.Model(&rule).UpdateColumn("hit_count", gorm.Expr("hit_count + 1"))
+				}()
+
+				c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+				c.Header("Vary", "Host")
+				c.Redirect(http.StatusFound, targetURL)
+				return
+			}
+
+			if rule.RuleType == "url_redirect" {
+				if !matchPath(rule.SourcePath, requestPath, rule.MatchType) {
+					continue
+				}
+
+				targetPath := resolveTargetPath(rule.TargetPath, requestPath, rule.SourcePath)
+				targetHost := rule.TargetHost
+				if targetHost == "" {
+					targetHost = host
+				}
+
+				var targetURL string
+				if strings.HasPrefix(targetHost, "http://") || strings.HasPrefix(targetHost, "https://") {
+					targetURL = targetHost + targetPath
+				} else {
+					scheme := "http"
+					if c.Request.TLS != nil {
+						scheme = "https"
+					}
+					targetURL = scheme + "://" + targetHost + targetPath
+				}
+
+				redirectCode := rule.RedirectCode
+				if redirectCode != 301 && redirectCode != 302 {
+					redirectCode = 302
+				}
+
+				clientIP := c.ClientIP()
+				userAgent := c.Request.UserAgent()
+
+				go func() {
+					log := models.AccessLog{
+						Domain:     host,
+						Path:       requestPath,
+						TargetURL:  targetURL,
+						ClientIP:   clientIP,
+						UserAgent:  userAgent,
+						StatusCode: redirectCode,
+						CreatedAt:  time.Now(),
+					}
+					cache.db.Create(&log)
+					cache.db.Model(&rule).UpdateColumn("hit_count", gorm.Expr("hit_count + 1"))
+				}()
+
+				c.Header("Cache-Control", "no-cache, no-store, must-revalidate")
+				c.Header("Vary", "Host")
+				c.Redirect(redirectCode, targetURL)
+				return
+			}
+		}
+
+		c.JSON(http.StatusNotFound, gin.H{"error": "no matching redirect for: " + host + requestPath})
 	}
 }
 

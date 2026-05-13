@@ -58,18 +58,24 @@ func SeedData(db *gorm.DB) {
 		nodeIDsAll, _ := json.Marshal([]uint{nodes[0].ID, nodes[1].ID})
 		rules := []models.RedirectRule{
 			{
+				Name:        "静态资源分发",
 				Domain:      "cdn.veer.local",
-				Description: "静态资源分发",
+				Description: "前端静态资源（JS/CSS/图片）分发",
+				RuleType:    "domain_routing",
 				Strategy:    "round-robin",
 				NodeIDs:     string(nodeIDsAll),
-				HitCount:    0,
+				Enabled:     true,
+				Priority:    0,
 			},
 			{
+				Name:        "视频资源分发",
 				Domain:      "video.veer.local",
-				Description: "视频资源分发",
+				Description: "视频流媒体资源分发",
+				RuleType:    "domain_routing",
 				Strategy:    "weighted",
 				NodeIDs:     string(nodeIDsAll),
-				HitCount:    0,
+				Enabled:     true,
+				Priority:    1,
 			},
 		}
 		if result := db.Create(&rules); result.Error != nil {

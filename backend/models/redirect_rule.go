@@ -1,17 +1,27 @@
-// Package models defines the data models for the Veer system.
 package models
 
 import "time"
 
-// RedirectRule represents a URL redirect rule with associated CDN nodes.
-// Domain 是主查找键，请求的 Host 匹配 Domain 后执行 302 重定向
 type RedirectRule struct {
-	ID            uint      `json:"id" gorm:"primarykey"`
-	Domain        string    `json:"domain" gorm:"uniqueIndex;not null"` // 唯一域名，调度器通过 Host 匹配此字段
-	Description   string    `json:"description"`
-	Strategy      string    `json:"strategy" gorm:"default:'round-robin'"`      // round-robin/weighted/random
-	NodeIDs       string    `json:"node_ids"`                                   // JSON array string, e.g. "[1,2,3]"
-	OriginBaseURL string    `json:"origin_base_url" gorm:"size:512;default:''"` // 回源地址，Edge 节点缓存未命中时使用
-	HitCount      int64     `json:"hit_count"`
-	CreatedAt     time.Time `json:"created_at"`
+	ID          uint   `json:"id" gorm:"primarykey"`
+	Name        string `json:"name" gorm:"size:128"`
+	Description string `json:"description"`
+	Enabled     bool   `json:"enabled" gorm:"default:true"`
+	Priority    int    `json:"priority" gorm:"default:0"`
+
+	RuleType string `json:"rule_type" gorm:"default:'domain_routing';size:32"`
+
+	Domain        string `json:"domain" gorm:"size:253"`
+	Strategy      string `json:"strategy" gorm:"default:'round-robin'"`
+	NodeIDs       string `json:"node_ids"`
+	OriginBaseURL string `json:"origin_base_url" gorm:"size:512;default:''"`
+	HitCount      int64  `json:"hit_count"`
+
+	MatchType    string `json:"match_type" gorm:"default:'prefix';size:16"`
+	SourcePath   string `json:"source_path" gorm:"default:'/';size:512"`
+	TargetHost   string `json:"target_host" gorm:"size:253"`
+	TargetPath   string `json:"target_path" gorm:"size:512"`
+	RedirectCode int    `json:"redirect_code" gorm:"default:302"`
+
+	CreatedAt time.Time `json:"created_at"`
 }

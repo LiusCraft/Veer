@@ -240,7 +240,7 @@ function Nodes() {
     <Box>
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 3 }}>
         <Typography variant="h5" sx={{ fontWeight: 600 }}>
-          CDN 节点管理
+          资源管理
         </Typography>
         <Stack direction="row" spacing={1}>
           <Button

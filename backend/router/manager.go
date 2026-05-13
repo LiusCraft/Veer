@@ -55,6 +55,8 @@ func SetupManagerRouter(db *gorm.DB, cfg *config.Config, hcm *services.HealthChe
 			rules.PUT("/:id", handlers.UpdateRule(db))
 			rules.DELETE("/:id", handlers.DeleteRule(db))
 			rules.DELETE("/batch", handlers.BatchDeleteRules(db))
+			rules.PUT("/batch/toggle", handlers.BatchToggleRules(db))
+			rules.PUT("/reorder", handlers.ReorderRules(db))
 		}
 
 		stats := api.Group("/stats")

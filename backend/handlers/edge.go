@@ -113,7 +113,7 @@ func ListEdgeRulesHandler(db *gorm.DB, cfg *config.Config) gin.HandlerFunc {
 		}
 
 		var rules []models.RedirectRule
-		if err := db.Find(&rules).Error; err != nil {
+		if err := db.Where("rule_type = ? AND enabled = ?", "domain_routing", true).Find(&rules).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
 			return
 		}
