@@ -24,12 +24,12 @@ const DRAWER_WIDTH = 240
 
 const navItems = [
   { label: '概览仪表盘', path: '/dashboard', icon: <DashboardIcon /> },
+  { label: '调度视图', path: '/views', icon: <MapIcon /> },
   {
     label: '资源管理', icon: <StorageIcon />,
     children: [
+      { label: '集群管理', path: '/clusters', icon: <GroupWorkIcon /> },
       { label: '节点管理', path: '/nodes', icon: <DnsIcon /> },
-      { label: '调度视图', path: '/views', icon: <MapIcon />, disabled: true },
-      { label: '业务组', path: '/groups', icon: <GroupWorkIcon />, disabled: true },
     ],
   },
   { label: '域名管理', path: '/rules', icon: <RouteIcon /> },

@@ -21,7 +21,7 @@ import ArrowForwardIcon from '@mui/icons-material/ArrowForward'
 import PublicIcon from '@mui/icons-material/Public'
 import MemoryIcon from '@mui/icons-material/Memory'
 import BlockIcon from '@mui/icons-material/Block'
-import { rulesApi, nodesApi } from '../api/index.js'
+import { rulesApi, nodesApi, clustersApi } from '../api/index.js'
 import { exportToCSV } from '../utils/csv.js'
 
 const MATCH_TYPE_LABELS = { prefix: '前缀匹配', exact: '精确匹配', regex: '正则匹配' }
@@ -100,7 +100,7 @@ function RuleCard({ rule, nodes, onEdit, onToggle, isSelectMode, isSelected, onS
           </Box>
 
           {isRouting ? (
-            <RoutingRulePreview rule={rule} nodes={nodes} />
+            <RoutingRulePreview rule={rule} clusters={clusters} nodes={nodes} />
           ) : (
             <UrlRedirectRulePreview rule={rule} />
           )}
@@ -135,10 +135,19 @@ function RuleCard({ rule, nodes, onEdit, onToggle, isSelectMode, isSelected, onS
   )
 }
 
-function RoutingRulePreview({ rule, nodes }) {
-  const parseNodeIds = (str) => { try { return JSON.parse(str || '[]') } catch { return [] } }
-  const nodeIds = parseNodeIds(rule.node_ids)
-  const nodeNames = nodeIds.map(id => nodes.find(n => n.id === id)?.name || `Node#${id}`)
+function RoutingRulePreview({ rule, clusters: allClusters }) {
+  const clusterNames = (rule.clusters || []).map(c => {
+    const cl = allClusters.find(cl => cl.id === c.cluster_id)
+    return cl?.name || `Cluster#${c.cluster_id}`
+  })
+  const displayNames = clusterNames.length > 0
+    ? clusterNames.join(', ')
+    : (() => {
+        try {
+          const ids = JSON.parse(rule.node_ids || '[]')
+          return ids.map(id => `Node#${id}`).join(', ') || '-'
+        } catch { return '-' }
+      })()
 
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: theme =>
@@ -162,7 +171,7 @@ function RoutingRulePreview({ rule, nodes }) {
           fontFamily: 'monospace', fontSize: 12, fontWeight: 600,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
         }}>
-          {nodeNames.join(', ') || '-'}
+          {displayNames}
         </Typography>
         {rule.cache_ttl_seconds != null && rule.cache_ttl_seconds > 0 && (
           <Typography variant="caption" color="success.main" sx={{ fontSize: 10, fontWeight: 600 }}>
@@ -222,6 +231,8 @@ function Rules() {
   const [routingForm, setRoutingForm] = useState(EMPTY_ROUTING_FORM)
   const [redirectForm, setRedirectForm] = useState(EMPTY_REDIRECT_FORM)
   const [selectedNodeIds, setSelectedNodeIds] = useState([])
+  const [clusters, setClusters] = useState([])
+  const [selectedClusterBindings, setSelectedClusterBindings] = useState([])
   const [saving, setSaving] = useState(false)
   const [snackbar, setSnackbar] = useState({ open: false, message: '' })
   const [search, setSearch] = useState('')
@@ -233,13 +244,15 @@ function Rules() {
     setLoading(true)
     setError('')
     try {
-      const [rulesRes, nodesRes] = await Promise.all([
+      const [rulesRes, nodesRes, clustersRes] = await Promise.all([
         rulesApi.list(),
         nodesApi.list(),
+        clustersApi.list(),
       ])
       const sorted = (rulesRes.data || []).sort((a, b) => (a.priority || 0) - (b.priority || 0))
       setRules(sorted)
       setNodes(nodesRes.data || [])
+      setClusters(clustersRes.data || [])
     } catch (err) {
       setError(err.message)
     } finally {
@@ -270,11 +283,13 @@ function Rules() {
         setRedirectForm({ ...EMPTY_REDIRECT_FORM, ...rule, enabled: rule.enabled })
       } else {
         setSelectedNodeIds(parseNodeIds(rule.node_ids))
-        setRoutingForm({ ...EMPTY_ROUTING_FORM, ...rule, enabled: rule.enabled })
+        setSelectedClusterBindings(rule.clusters || [])
+        setRoutingForm({ ...EMPTY_ROUTING_FORM, ...rule, enabled: rule.enabled, node_ids: rule.node_ids || '[]' })
       }
     } else {
       setFormType('domain_routing')
       setSelectedNodeIds([])
+      setSelectedClusterBindings([])
       setRoutingForm(EMPTY_ROUTING_FORM)
       setRedirectForm(EMPTY_REDIRECT_FORM)
     }
@@ -287,6 +302,7 @@ function Rules() {
     setRoutingForm(EMPTY_ROUTING_FORM)
     setRedirectForm(EMPTY_REDIRECT_FORM)
     setSelectedNodeIds([])
+    setSelectedClusterBindings([])
   }
 
   const handleRoutingChange = (f) => (e) => setRoutingForm(p => ({ ...p, [f]: e.target.value }))
@@ -300,7 +316,9 @@ function Rules() {
   const handleSave = async () => {
     const form = isRoutingForm ? routingForm : redirectForm
     if (!form.domain?.trim()) { setError('域名字段不能为空'); return }
-    if (isRoutingForm && selectedNodeIds.length === 0) { setError('请至少选择一个绑定节点'); return }
+    if (isRoutingForm && selectedClusterBindings.length === 0 && selectedNodeIds.length === 0) {
+      setError('请至少选择一个集群或节点'); return
+    }
 
     setSaving(true)
     setError('')
@@ -308,7 +326,12 @@ function Rules() {
     try {
       const payload = ruleType === 'url_redirect'
         ? { ...redirectForm, domain: redirectForm.domain.trim(), rule_type: 'url_redirect' }
-        : { ...routingForm, domain: routingForm.domain.trim(), node_ids: JSON.stringify(selectedNodeIds) }
+        : {
+            ...routingForm,
+            domain: routingForm.domain.trim(),
+            node_ids: selectedNodeIds.length > 0 ? JSON.stringify(selectedNodeIds) : '[]',
+            clusters: selectedClusterBindings.length > 0 ? selectedClusterBindings : undefined,
+          }
 
       if (editingRule) {
         await rulesApi.update(editingRule.id, payload)
@@ -566,6 +589,32 @@ function Rules() {
                     ))}
                   </Select>
                   <FormHelperText>按策略将请求均衡分发到所选节点</FormHelperText>
+                </FormControl>
+                <FormControl fullWidth size="small">
+                  <InputLabel>关联集群</InputLabel>
+                  <Select multiple value={selectedClusterBindings.map(b => b.cluster_id)}
+                    onChange={(e) => {
+                      const ids = typeof e.target.value === 'string' ? e.target.value.split(',').map(Number) : e.target.value
+                      setSelectedClusterBindings(ids.map(id => ({
+                        cluster_id: id, weight: 1, priority: 0,
+                      })))
+                    }}
+                    input={<OutlinedInput label="关联集群" />}
+                    renderValue={(sel) => sel.map(id => {
+                      const cl = clusters.find(c => c.id === id)
+                      return cl?.name || `#${id}`
+                    }).join(', ')}>
+                    {clusters.map(cl => (
+                      <MenuItem key={cl.id} value={cl.id}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
+                          <span>{cl.name}</span>
+                          <Box sx={{ flexGrow: 1 }} />
+                          <Chip label={cl.region || ''} size="small" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
+                        </Box>
+                      </MenuItem>
+                    ))}
+                  </Select>
+                  <FormHelperText>关联集群后，规则将调度到集群下的活跃节点（如同时选择了节点，两者均生效）</FormHelperText>
                 </FormControl>
               </FormSection>
               <Divider />

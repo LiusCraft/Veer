@@ -13,7 +13,7 @@ type RedirectRule struct {
 
 	Domain        string `json:"domain" gorm:"size:253"`
 	Strategy      string `json:"strategy" gorm:"default:'round-robin'"`
-	NodeIDs       string `json:"node_ids"`
+	NodeIDs       string `json:"node_ids"` // Deprecated: use RuleCluster.ClusterID instead
 	OriginBaseURL string `json:"origin_base_url" gorm:"size:512;default:''"`
 	HitCount      int64  `json:"hit_count"`
 

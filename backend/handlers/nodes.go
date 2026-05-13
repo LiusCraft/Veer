@@ -94,8 +94,31 @@ func validateNodeStatus(status string) (bool, string) {
 // ListNodes 处理 GET /api/nodes — 列出所有 CDN 节点
 func ListNodes(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		query := db.Model(&models.CdnNode{})
+
+		if clusterID := c.Query("cluster_id"); clusterID != "" {
+			if cid, err := strconv.ParseUint(clusterID, 10, 64); err == nil {
+				query = query.Where("cluster_id = ?", cid)
+			}
+		}
+		if region := c.Query("region"); region != "" {
+			query = query.Where("region = ?", region)
+		}
+		if isp := c.Query("isp"); isp != "" {
+			query = query.Where("isp = ?", isp)
+		}
+		if provider := c.Query("provider"); provider != "" {
+			query = query.Where("provider = ?", provider)
+		}
+		if nodeType := c.Query("node_type"); nodeType != "" {
+			query = query.Where("node_type = ?", nodeType)
+		}
+		if status := c.Query("status"); status != "" {
+			query = query.Where("status = ?", status)
+		}
+
 		var nodes []models.CdnNode
-		if err := db.Order("created_at desc").Find(&nodes).Error; err != nil {
+		if err := query.Order("created_at desc").Find(&nodes).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
@@ -107,11 +130,18 @@ func ListNodes(db *gorm.DB) gin.HandlerFunc {
 func CreateNode(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
-			Name   string `json:"name"`
-			URL    string `json:"url"`
-			Weight int    `json:"weight"`
-			Region string `json:"region"`
-			Status string `json:"status"`
+			Name           string `json:"name"`
+			URL            string `json:"url"`
+			Weight         int    `json:"weight"`
+			Region         string `json:"region"`
+			Status         string `json:"status"`
+			ClusterID      uint   `json:"cluster_id"`
+			IP             string `json:"ip"`
+			ISP            string `json:"isp"`
+			Provider       string `json:"provider"`
+			NodeType       string `json:"node_type"`
+			BandwidthMbps  int    `json:"bandwidth_mbps"`
+			MaxConnections int    `json:"max_connections"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -152,11 +182,18 @@ func CreateNode(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		node := models.CdnNode{
-			Name:   body.Name,
-			URL:    body.URL,
-			Weight: weight,
-			Region: body.Region,
-			Status: status,
+			Name:           body.Name,
+			URL:            body.URL,
+			Weight:         weight,
+			Region:         body.Region,
+			Status:         status,
+			ClusterID:      body.ClusterID,
+			IP:             body.IP,
+			ISP:            body.ISP,
+			Provider:       body.Provider,
+			NodeType:       body.NodeType,
+			BandwidthMbps:  body.BandwidthMbps,
+			MaxConnections: body.MaxConnections,
 		}
 
 		if err := db.Create(&node).Error; err != nil {
@@ -183,11 +220,18 @@ func UpdateNode(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		var body struct {
-			Name   string `json:"name"`
-			URL    string `json:"url"`
-			Weight int    `json:"weight"`
-			Region string `json:"region"`
-			Status string `json:"status"`
+			Name           string  `json:"name"`
+			URL            string  `json:"url"`
+			Weight         int     `json:"weight"`
+			Region         *string `json:"region"`
+			Status         string  `json:"status"`
+			ClusterID      *uint   `json:"cluster_id"`
+			IP             *string `json:"ip"`
+			ISP            *string `json:"isp"`
+			Provider       *string `json:"provider"`
+			NodeType       *string `json:"node_type"`
+			BandwidthMbps  *int    `json:"bandwidth_mbps"`
+			MaxConnections *int    `json:"max_connections"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -231,7 +275,30 @@ func UpdateNode(db *gorm.DB) gin.HandlerFunc {
 			node.Status = body.Status
 		}
 
-		node.Region = body.Region
+		if body.Region != nil {
+			node.Region = *body.Region
+		}
+		if body.ClusterID != nil {
+			node.ClusterID = *body.ClusterID
+		}
+		if body.IP != nil {
+			node.IP = *body.IP
+		}
+		if body.ISP != nil {
+			node.ISP = *body.ISP
+		}
+		if body.Provider != nil {
+			node.Provider = *body.Provider
+		}
+		if body.NodeType != nil {
+			node.NodeType = *body.NodeType
+		}
+		if body.BandwidthMbps != nil {
+			node.BandwidthMbps = *body.BandwidthMbps
+		}
+		if body.MaxConnections != nil {
+			node.MaxConnections = *body.MaxConnections
+		}
 
 		if err := db.Save(&node).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -368,6 +435,23 @@ func measureLatency(url string) int {
 	}
 
 	return int(latency.Milliseconds())
+}
+
+// GetNode 处理 GET /api/nodes/:id — 获取单个 CDN 节点
+func GetNode(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+			return
+		}
+		var node models.CdnNode
+		if err := db.First(&node, id).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "node not found"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"data": node})
+	}
 }
 
 // newRequestWithTrace 创建带有连接时间追踪的 HTTP 请求

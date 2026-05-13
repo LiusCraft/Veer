@@ -40,17 +40,20 @@ func getRoundRobinCounter(ruleID uint) *int64 {
 }
 
 type RuleCache struct {
-	mu    sync.RWMutex
-	rules map[string][]models.RedirectRule
-	nodes map[uint]models.CdnNode
-	db    *gorm.DB
+	mu           sync.RWMutex
+	rules        map[string][]models.RedirectRule
+	nodes        map[uint]models.CdnNode
+	clusterNodes map[uint][]models.CdnNode
+	ruleClusters []models.RuleCluster
+	db           *gorm.DB
 }
 
 func NewRuleCache(db *gorm.DB, intervalSeconds int) *RuleCache {
 	c := &RuleCache{
-		rules: make(map[string][]models.RedirectRule),
-		nodes: make(map[uint]models.CdnNode),
-		db:    db,
+		rules:        make(map[string][]models.RedirectRule),
+		nodes:        make(map[uint]models.CdnNode),
+		clusterNodes: make(map[uint][]models.CdnNode),
+		db:           db,
 	}
 	c.refresh()
 	if intervalSeconds > 0 {
@@ -72,15 +75,29 @@ func (c *RuleCache) refresh() {
 		return
 	}
 
-	var allNodes []models.CdnNode
-	if err := c.db.Where("status = ?", "active").Find(&allNodes).Error; err != nil {
-		log.Printf("[scheduler] failed to refresh nodes: %v", err)
-		return
+	ruleIDs := make([]uint, len(rules))
+	for i, r := range rules {
+		ruleIDs[i] = r.ID
 	}
 
+	var ruleClusters []models.RuleCluster
+	if len(ruleIDs) > 0 {
+		c.db.Where("rule_id IN ?", ruleIDs).Find(&ruleClusters)
+	}
+
+	clusterIDs := make(map[uint]bool)
+	for _, rc := range ruleClusters {
+		clusterIDs[rc.ClusterID] = true
+	}
+
+	var allNodes []models.CdnNode
+	c.db.Where("status = ?", "active").Find(&allNodes)
+
 	nodeMap := make(map[uint]models.CdnNode, len(allNodes))
+	clusterNodes := make(map[uint][]models.CdnNode)
 	for _, n := range allNodes {
 		nodeMap[n.ID] = n
+		clusterNodes[n.ClusterID] = append(clusterNodes[n.ClusterID], n)
 	}
 
 	ruleMap := make(map[string][]models.RedirectRule)
@@ -93,9 +110,11 @@ func (c *RuleCache) refresh() {
 	c.mu.Lock()
 	c.rules = ruleMap
 	c.nodes = nodeMap
+	c.clusterNodes = clusterNodes
+	c.ruleClusters = ruleClusters
 	c.mu.Unlock()
 
-	log.Printf("[scheduler] rule cache refreshed: %d rules, %d nodes", len(rules), len(allNodes))
+	log.Printf("[scheduler] rule cache refreshed: %d rules, %d nodes, %d clusters", len(rules), len(allNodes), len(clusterIDs))
 }
 
 func (c *RuleCache) Lookup(domain string) ([]models.RedirectRule, bool) {
@@ -112,6 +131,20 @@ func (c *RuleCache) GetNodes(ids []uint) []models.CdnNode {
 	for _, id := range ids {
 		if n, ok := c.nodes[id]; ok {
 			result = append(result, n)
+		}
+	}
+	return result
+}
+
+func (c *RuleCache) getNodesForRule(ruleID uint) []models.CdnNode {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	var result []models.CdnNode
+	for _, rc := range c.ruleClusters {
+		if rc.RuleID == ruleID {
+			if nodes, ok := c.clusterNodes[rc.ClusterID]; ok {
+				result = append(result, nodes...)
+			}
 		}
 	}
 	return result
@@ -166,12 +199,13 @@ func SchedulerHandler(cache *RuleCache) gin.HandlerFunc {
 			}
 
 			if rule.RuleType == "domain_routing" {
-				var nodeIDs []uint
-				if err := json.Unmarshal([]byte(rule.NodeIDs), &nodeIDs); err != nil || len(nodeIDs) == 0 {
-					continue
+				nodes := cache.getNodesForRule(rule.ID)
+				if len(nodes) == 0 {
+					var nodeIDs []uint
+					if err := json.Unmarshal([]byte(rule.NodeIDs), &nodeIDs); err == nil && len(nodeIDs) > 0 {
+						nodes = cache.GetNodes(nodeIDs)
+					}
 				}
-
-				nodes := cache.GetNodes(nodeIDs)
 				if len(nodes) == 0 {
 					continue
 				}

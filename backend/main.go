@@ -39,6 +39,9 @@ func main() {
 		&models.CdnNode{},
 		&models.RedirectRule{},
 		&models.AccessLog{},
+		&models.Cluster{},
+		&models.RuleCluster{},
+		&models.ClusterMetric{},
 	); err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}

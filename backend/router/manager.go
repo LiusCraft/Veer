@@ -16,11 +16,7 @@ func SetupManagerRouter(db *gorm.DB, cfg *config.Config, hcm *services.HealthChe
 	r.Use(middleware.CORS())
 
 	if cfg.RateLimit.Enabled {
-		requestsPerMinute := cfg.RateLimit.RequestsPerMinute
-		if requestsPerMinute <= 0 {
-			requestsPerMinute = 60
-		}
-		r.Use(middleware.RateLimitMiddlewareWithConfig(requestsPerMinute, cfg.RateLimit.Whitelist))
+		r.Use(middleware.RateLimitMiddlewareWithConfig(cfg.RateLimit.RequestsPerMinute, cfg.RateLimit.Whitelist))
 	}
 
 	r.StaticFS("/admin", StaticFiles())
@@ -40,6 +36,7 @@ func SetupManagerRouter(db *gorm.DB, cfg *config.Config, hcm *services.HealthChe
 		nodes := api.Group("/nodes")
 		{
 			nodes.GET("", handlers.ListNodes(db))
+			nodes.GET("/:id", handlers.GetNode(db))
 			nodes.POST("", handlers.CreateNode(db))
 			nodes.PUT("/:id", handlers.UpdateNode(db))
 			nodes.DELETE("/:id", handlers.DeleteNode(db))
@@ -51,6 +48,7 @@ func SetupManagerRouter(db *gorm.DB, cfg *config.Config, hcm *services.HealthChe
 		rules := api.Group("/rules")
 		{
 			rules.GET("", handlers.ListRules(db))
+			rules.GET("/:id", handlers.GetRule(db))
 			rules.POST("", handlers.CreateRule(db))
 			rules.PUT("/:id", handlers.UpdateRule(db))
 			rules.DELETE("/:id", handlers.DeleteRule(db))
@@ -59,11 +57,30 @@ func SetupManagerRouter(db *gorm.DB, cfg *config.Config, hcm *services.HealthChe
 			rules.PUT("/reorder", handlers.ReorderRules(db))
 		}
 
+		clusters := api.Group("/clusters")
+		{
+			clusters.GET("", handlers.ListClusters(db))
+			clusters.POST("", handlers.CreateCluster(db))
+			clusters.GET("/:id", handlers.GetCluster(db))
+			clusters.PUT("/:id", handlers.UpdateCluster(db))
+			clusters.DELETE("/:id", handlers.DeleteCluster(db))
+			clusters.GET("/:id/nodes", handlers.ListClusterNodes(db))
+			clusters.PUT("/:id/nodes", handlers.SetClusterNodes(db))
+			clusters.GET("/:id/rules", handlers.ListClusterRules(db))
+			clusters.GET("/:id/stats", handlers.GetClusterStats(db))
+		}
+
 		stats := api.Group("/stats")
 		{
 			stats.GET("/overview", handlers.GetOverview(db, hcm))
 			stats.GET("/logs", handlers.GetLogs(db))
 			stats.GET("/traffic", handlers.GetTraffic(db))
+		}
+		views := api.Group("/views")
+		{
+			views.GET("/topology", handlers.GetTopology(db))
+			views.GET("/health-matrix", handlers.GetHealthMatrix(db))
+			views.GET("/traffic-distribution", handlers.GetTrafficDistribution(db))
 		}
 	}
 
@@ -74,6 +91,9 @@ func SetupManagerRouter(db *gorm.DB, cfg *config.Config, hcm *services.HealthChe
 		edgeAPI.POST("/register", handlers.RegisterEdgeHandler(db, cfg))
 		edgeAPI.GET("/rules", handlers.ListEdgeRulesHandler(db, cfg))
 	}
+
+	// Node heartbeat (authenticated via X-Edge-Secret, not JWT)
+	r.POST("/api/nodes/:id/heartbeat", handlers.NodeHeartbeatHandler(db, cfg))
 
 	return r
 }

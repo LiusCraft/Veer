@@ -13,6 +13,12 @@ import (
 	"gorm.io/gorm"
 )
 
+type ClusterBinding struct {
+	ClusterID uint `json:"cluster_id"`
+	Weight    int  `json:"weight"`
+	Priority  int  `json:"priority"`
+}
+
 var validStrategies = []string{"round-robin", "weighted", "random"}
 
 var domainPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$`)
@@ -102,7 +108,46 @@ func ListRules(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"data": rules, "total": len(rules)})
+
+		type RuleClusterInfo struct {
+			ID          uint   `json:"id"`
+			RuleID      uint   `json:"rule_id"`
+			ClusterID   uint   `json:"cluster_id"`
+			ClusterName string `json:"cluster_name"`
+			Weight      int    `json:"weight"`
+			Priority    int    `json:"priority"`
+		}
+
+		var ruleClusters []models.RuleCluster
+		db.Find(&ruleClusters)
+
+		clusterMap := make(map[uint]string)
+		var allClusters []models.Cluster
+		db.Find(&allClusters)
+		for _, cl := range allClusters {
+			clusterMap[cl.ID] = cl.Name
+		}
+
+		type RuleResponse struct {
+			models.RedirectRule
+			Clusters []RuleClusterInfo `json:"clusters"`
+		}
+
+		response := make([]RuleResponse, len(rules))
+		for i, r := range rules {
+			clusters := make([]RuleClusterInfo, 0)
+			for _, rc := range ruleClusters {
+				if rc.RuleID == r.ID {
+					clusters = append(clusters, RuleClusterInfo{
+						ID: rc.ID, RuleID: rc.RuleID, ClusterID: rc.ClusterID,
+						ClusterName: clusterMap[rc.ClusterID], Weight: rc.Weight, Priority: rc.Priority,
+					})
+				}
+			}
+			response[i] = RuleResponse{RedirectRule: r, Clusters: clusters}
+		}
+
+		c.JSON(http.StatusOK, gin.H{"data": response, "total": len(rules)})
 	}
 }
 
@@ -119,22 +164,23 @@ func checkDomainUnique(db *gorm.DB, domain string, excludeID uint) bool {
 func CreateRule(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
-			Name                 string `json:"name"`
-			Description          string `json:"description"`
-			Enabled              *bool  `json:"enabled"`
-			RuleType             string `json:"rule_type"`
-			Domain               string `json:"domain"`
-			Strategy             string `json:"strategy"`
-			NodeIDs              string `json:"node_ids"`
-			OriginBaseURL        string `json:"origin_base_url"`
-			MatchType            string `json:"match_type"`
-			SourcePath           string `json:"source_path"`
-			TargetHost           string `json:"target_host"`
-			TargetPath           string `json:"target_path"`
-			RedirectCode         int    `json:"redirect_code"`
-			CacheTTLSeconds      *int   `json:"cache_ttl_seconds"`
-			CacheControlOverride string `json:"cache_control_override"`
-			BypassCache          bool   `json:"bypass_cache"`
+			Name                 string           `json:"name"`
+			Description          string           `json:"description"`
+			Enabled              *bool            `json:"enabled"`
+			RuleType             string           `json:"rule_type"`
+			Domain               string           `json:"domain"`
+			Strategy             string           `json:"strategy"`
+			NodeIDs              string           `json:"node_ids"`
+			OriginBaseURL        string           `json:"origin_base_url"`
+			MatchType            string           `json:"match_type"`
+			SourcePath           string           `json:"source_path"`
+			TargetHost           string           `json:"target_host"`
+			TargetPath           string           `json:"target_path"`
+			RedirectCode         int              `json:"redirect_code"`
+			CacheTTLSeconds      *int             `json:"cache_ttl_seconds"`
+			CacheControlOverride string           `json:"cache_control_override"`
+			BypassCache          bool             `json:"bypass_cache"`
+			Clusters             []ClusterBinding `json:"clusters"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -178,9 +224,11 @@ func CreateRule(db *gorm.DB) gin.HandlerFunc {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 				return
 			}
-			if ok, errMsg := validateNodeIDs(body.NodeIDs); !ok {
-				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
-				return
+			if len(body.Clusters) == 0 {
+				if ok, errMsg := validateNodeIDs(body.NodeIDs); !ok {
+					c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+					return
+				}
 			}
 			if ok, errMsg := validateOriginURL(body.OriginBaseURL); !ok {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
@@ -227,6 +275,22 @@ func CreateRule(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+
+		if len(body.Clusters) > 0 {
+			for _, cb := range body.Clusters {
+				ruleCluster := models.RuleCluster{
+					RuleID:    rule.ID,
+					ClusterID: cb.ClusterID,
+					Weight:    cb.Weight,
+					Priority:  cb.Priority,
+				}
+				if ruleCluster.Weight <= 0 {
+					ruleCluster.Weight = 1
+				}
+				db.Create(&ruleCluster)
+			}
+		}
+
 		c.JSON(http.StatusCreated, gin.H{"data": rule})
 	}
 }
@@ -246,22 +310,23 @@ func UpdateRule(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		var body struct {
-			Name                 *string `json:"name"`
-			Description          *string `json:"description"`
-			Enabled              *bool   `json:"enabled"`
-			Priority             *int    `json:"priority"`
-			Domain               *string `json:"domain"`
-			Strategy             *string `json:"strategy"`
-			NodeIDs              *string `json:"node_ids"`
-			OriginBaseURL        *string `json:"origin_base_url"`
-			MatchType            *string `json:"match_type"`
-			SourcePath           *string `json:"source_path"`
-			TargetHost           *string `json:"target_host"`
-			TargetPath           *string `json:"target_path"`
-			RedirectCode         *int    `json:"redirect_code"`
-			CacheTTLSeconds      *int    `json:"cache_ttl_seconds"`
-			CacheControlOverride *string `json:"cache_control_override"`
-			BypassCache          *bool   `json:"bypass_cache"`
+			Name                 *string          `json:"name"`
+			Description          *string          `json:"description"`
+			Enabled              *bool            `json:"enabled"`
+			Priority             *int             `json:"priority"`
+			Domain               *string          `json:"domain"`
+			Strategy             *string          `json:"strategy"`
+			NodeIDs              *string          `json:"node_ids"`
+			OriginBaseURL        *string          `json:"origin_base_url"`
+			MatchType            *string          `json:"match_type"`
+			SourcePath           *string          `json:"source_path"`
+			TargetHost           *string          `json:"target_host"`
+			TargetPath           *string          `json:"target_path"`
+			RedirectCode         *int             `json:"redirect_code"`
+			CacheTTLSeconds      *int             `json:"cache_ttl_seconds"`
+			CacheControlOverride *string          `json:"cache_control_override"`
+			BypassCache          *bool            `json:"bypass_cache"`
+			Clusters             []ClusterBinding `json:"clusters"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -365,6 +430,21 @@ func UpdateRule(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+
+		if body.Clusters != nil {
+			db.Where("rule_id = ?", rule.ID).Delete(&models.RuleCluster{})
+			for _, cb := range body.Clusters {
+				rc := models.RuleCluster{
+					RuleID: rule.ID, ClusterID: cb.ClusterID,
+					Weight: cb.Weight, Priority: cb.Priority,
+				}
+				if rc.Weight <= 0 {
+					rc.Weight = 1
+				}
+				db.Create(&rc)
+			}
+		}
+
 		c.JSON(http.StatusOK, gin.H{"data": rule})
 	}
 }
@@ -381,6 +461,7 @@ func DeleteRule(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		db.Where("rule_id = ?", id).Delete(&models.RuleCluster{})
 		c.JSON(http.StatusOK, gin.H{"message": "deleted successfully"})
 	}
 }
@@ -403,6 +484,7 @@ func BatchDeleteRules(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+		db.Where("rule_id IN ?", body.IDs).Delete(&models.RuleCluster{})
 		c.JSON(http.StatusOK, gin.H{"message": "batch delete successful", "deleted": len(body.IDs)})
 	}
 }
@@ -453,5 +535,51 @@ func ReorderRules(db *gorm.DB) gin.HandlerFunc {
 			db.Model(&models.RedirectRule{}).Where("id = ?", id).Update("priority", i)
 		}
 		c.JSON(http.StatusOK, gin.H{"message": "reorder successful"})
+	}
+}
+
+func GetRule(db *gorm.DB) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		id, err := strconv.ParseUint(c.Param("id"), 10, 64)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+			return
+		}
+		var rule models.RedirectRule
+		if err := db.First(&rule, id).Error; err != nil {
+			c.JSON(http.StatusNotFound, gin.H{"error": "rule not found"})
+			return
+		}
+
+		type RuleClusterInfo struct {
+			ID          uint   `json:"id"`
+			ClusterID   uint   `json:"cluster_id"`
+			ClusterName string `json:"cluster_name"`
+			Weight      int    `json:"weight"`
+			Priority    int    `json:"priority"`
+		}
+
+		var ruleClusters []models.RuleCluster
+		db.Where("rule_id = ?", id).Find(&ruleClusters)
+
+		clusters := make([]RuleClusterInfo, len(ruleClusters))
+		for i, rc := range ruleClusters {
+			var cl models.Cluster
+			name := ""
+			if db.First(&cl, rc.ClusterID).Error == nil {
+				name = cl.Name
+			}
+			clusters[i] = RuleClusterInfo{
+				ID: rc.ID, ClusterID: rc.ClusterID, ClusterName: name,
+				Weight: rc.Weight, Priority: rc.Priority,
+			}
+		}
+
+		c.JSON(http.StatusOK, gin.H{
+			"data": gin.H{
+				"rule":     rule,
+				"clusters": clusters,
+			},
+		})
 	}
 }

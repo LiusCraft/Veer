@@ -93,4 +93,24 @@ export const statsApi = {
   traffic: () => api.get('/stats/traffic'),
 }
 
+// ===== Clusters API =====
+export const clustersApi = {
+  list: (params = {}) => api.get('/clusters', { params }),
+  create: (data) => api.post('/clusters', data),
+  update: (id, data) => api.put(`/clusters/${id}`, data),
+  delete: (id) => api.delete(`/clusters/${id}`),
+  get: (id) => api.get(`/clusters/${id}`),
+  listNodes: (id, params = {}) => api.get(`/clusters/${id}/nodes`, { params }),
+  setNodes: (id, nodeIds) => api.put(`/clusters/${id}/nodes`, { node_ids: nodeIds }),
+  listRules: (id) => api.get(`/clusters/${id}/rules`),
+  stats: (id) => api.get(`/clusters/${id}/stats`),
+}
+
+// ===== Views API =====
+export const viewsApi = {
+  topology: () => api.get('/views/topology'),
+  healthMatrix: () => api.get('/views/health-matrix'),
+  trafficDistribution: () => api.get('/views/traffic-distribution'),
+}
+
 export default api
