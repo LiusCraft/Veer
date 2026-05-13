@@ -1,0 +1,152 @@
+%% 302CDN v2 序列图
+%% 包含：302跳转流程、JWT认证流程、自动健康检测流程
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Gin as Gin Router
+    participant Redirect as RedirectHandler
+    participant DB as SQLite DB
+    participant Node as Selected Node
+    participant Logger as AccessLogger
+
+    Client->>Gin: GET /r/video/images/logo.png<br/>Host: cdn.example.com
+
+    Gin->>Redirect: RedirectHandler(c, db)
+
+    Note over Redirect: 1. 提取域名和路径
+    Note over Redirect: ruleKey = "video"<br/>domain = "cdn.example.com"<br/>path = "images/logo.png"
+
+    Redirect->>DB: SELECT * FROM redirect_rules<br/>WHERE key = ? AND (domain = ? OR domain = '')<br/>ORDER BY domain DESC<br/>LIMIT 1
+
+    DB-->>Redirect: RedirectRule{domain: "cdn.example.com", ...}
+
+    Note over Redirect: 2. 解析 NodeIDs，查询活跃节点
+
+    Redirect->>DB: SELECT * FROM cdn_nodes<br/>WHERE id IN (1,2,3) AND status = 'active'
+
+    DB-->>Redirect: [CdnNode, CdnNode]
+
+    Note over Redirect: 3. 按策略选择节点（round-robin/weighted/random）
+
+    alt weighted strategy
+        Redirect->>Redirect: selectWeighted(nodes)
+    else round-robin strategy
+        Redirect->>Redirect: selectRoundRobin(nodes, ruleID)
+    else random strategy
+        Redirect->>Redirect: selectRandom(nodes)
+    end
+
+    Redirect-->>Node: Selected Node
+
+    Note over Redirect: 4. 拼接目标 URL: NodeURL + "/" + path<br/>https://cdn-east.aliyun.com + /images/logo.png<br/>= https://cdn-east.aliyun.com/images/logo.png
+
+    Redirect->>Logger: 异步记录 AccessLog<br/>(RuleKey, Domain, Path, TargetURL, ClientIP, ...)
+
+    Logger->>DB: INSERT INTO access_logs (...)
+
+    Note over Redirect: 5. 设置缓存控制头
+
+    Redirect->>Client: 302 Found<br/>Location: https://cdn-east.aliyun.com/images/logo.png<br/>Cache-Control: no-cache, no-store, must-revalidate<br/>Vary: Host
+```
+
+---
+
+```mermaid
+sequenceDiagram
+    participant Browser as Browser<br/>(Frontend)
+    participant API as Axios API
+    participant Gin as Gin Router
+    participant Auth as AuthHandler
+    participant JWT as JWT Middleware
+    participant DB as SQLite DB
+
+    rect rgb(240, 248, 255)
+        Note over Browser, DB: 登录流程
+        Browser->>API: POST /api/auth/login<br/>{username, password}
+
+        API->>Gin: POST /api/auth/login
+
+        Gin->>Auth: LoginHandler(db)
+
+        Auth->>DB: SELECT * FROM admin_users<br/>WHERE username = ?
+
+        DB-->>Auth: AdminUser or nil
+
+        alt 用户存在
+            Auth->>Auth: bcrypt.CompareHashAndPassword(passwordHash, password)
+
+            alt 密码匹配
+                Auth->>Auth: 生成 JWT Token<br/>claims: {user_id, username, exp}
+
+                Auth-->>Browser: {code: 200, data: {token, expires_at}}
+            else 密码不匹配
+                Auth-->>Browser: 401 Unauthorized<br/>{message: "invalid credentials"}
+            end
+        else 用户不存在
+            Auth-->>Browser: 401 Unauthorized
+        end
+    end
+
+    rect rgb(255, 250, 240)
+        Note over Browser, DB: 带认证的 API 请求
+        Browser->>API: GET /api/nodes<br/>Authorization: Bearer <token>
+
+        API->>Gin: GET /api/nodes<br/>Header: Authorization: Bearer <token>
+
+        Gin->>JWT: JWTAuthMiddleware()
+
+        JWT->>JWT: 验证 Token 签名<br/>检查 Token 是否过期
+
+        alt Token 有效
+            JWT->>JWT: 解析 claims，提取 user_id<br/>c.Set("user_id", 1)
+
+            JWT->>Gin: c.Next()
+
+            Gin->>Gin: ListNodesHandler(db)
+
+            Gin-->>Browser: {code: 200, data: [...]}
+        else Token 无效/过期
+            JWT-->>Browser: 401 Unauthorized<br/>{message: "invalid or expired token"}
+        end
+    end
+```
+
+---
+
+```mermaid
+sequenceDiagram
+    participant HealthCheck as HealthCheckManager
+    participant DB as SQLite DB
+    participant Node as CdnNode
+
+    Note over HealthCheck: 启动时初始化<br/>goroutine ticker (30s interval)
+
+    loop 每 30 秒
+        HealthCheck->>DB: SELECT * FROM cdn_nodes<br/>WHERE status IN ('active', 'inactive')
+
+        DB-->>HealthCheck: [CdnNode, CdnNode, ...]
+
+        par 对每个节点并发检测
+            HealthCheck->>Node: HTTP GET Node.URL<br/>(timeout: 5s)
+
+            alt 检测成功 (status < 500)
+                Node-->>HealthCheck: 响应成功
+
+                HealthCheck->>DB: UPDATE cdn_nodes<br/>SET status = 'active',<br/>consecutive_fails = 0,<br/>latency = <ms><br/>WHERE id = ?
+
+                Note over HealthCheck: 之前是 inactive<br/>连续失败 >= 3 才剔除<br/>连续成功自动恢复
+            else 检测失败
+                Node-->>HealthCheck: 连接超时/错误
+
+                HealthCheck->>DB: UPDATE cdn_nodes<br/>SET consecutive_fails = consecutive_fails + 1<br/>WHERE id = ?
+
+                alt consecutive_fails >= 3
+                    HealthCheck->>DB: UPDATE cdn_nodes<br/>SET status = 'inactive'<br/>WHERE id = ?
+
+                    Note over HealthCheck: 节点被自动下线
+                end
+            end
+        end
+    end
+```

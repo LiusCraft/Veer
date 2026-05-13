@@ -1,0 +1,10 @@
+.DS_Store
+*.db
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Backend build
+backend/dist/
+backend/cdn302

@@ -1,0 +1,157 @@
+%% 302CDN v2 类图
+%% 包含：数据模型、服务类、中间件
+
+```mermaid
+classDiagram
+    class RedirectRule {
+        +uint ID
+        +string Key
+        +string Domain
+        +string Description
+        +string Strategy
+        +string NodeIDs
+        +int64 HitCount
+        +time.Time CreatedAt
+    }
+
+    class CdnNode {
+        +uint ID
+        +string Name
+        +string URL
+        +int Weight
+        +string Region
+        +string Status
+        +int Latency
+        +int ConsecutiveFails
+        +time.Time CreatedAt
+    }
+
+    class AccessLog {
+        +uint ID
+        +string RuleKey
+        +string Domain
+        +string Path
+        +uint NodeID
+        +string NodeName
+        +string TargetURL
+        +string ClientIP
+        +string UserAgent
+        +int StatusCode
+        +time.Time CreatedAt
+    }
+
+    class AdminUser {
+        +uint ID
+        +string Username
+        +string PasswordHash
+        +time.Time CreatedAt
+        +time.Time UpdatedAt
+    }
+
+    class RedirectHandler {
+        -map~uint,*int64~ roundRobinCounters
+        -sync.RWMutex countersMu
+        +RedirectHandler(db *gorm.DB) gin.HandlerFunc
+        -getRoundRobinCounter(ruleID uint) *int64
+        -selectNode(nodes []CdnNode, strategy string, ruleID uint) CdnNode
+        -selectWeighted(nodes []CdnNode) CdnNode
+    }
+
+    class AuthHandler {
+        +LoginHandler(db *gorm.DB) gin.HandlerFunc
+        +LogoutHandler() gin.HandlerFunc
+        -generateToken(user *AdminUser, secret string, expiry time.Duration) (string, error)
+        -validatePassword(hash, password string) bool
+    }
+
+    class JWTMiddleware {
+        +JWTAuthMiddleware(secret string) gin.HandlerFunc
+        -extractToken(c *gin.Context) string
+        -parseToken(tokenString, secret string) (*Claims, error)
+    }
+
+    class RateLimitMiddleware {
+        -rateLimiters sync.Map
+        -whitelist []string
+        -requestsPerMinute int
+        +RateLimitMiddleware(cfg RateLimitConfig) gin.HandlerFunc
+        -getLimiter(clientIP string) *rate.Limiter
+        -isWhitelisted(clientIP string) bool
+    }
+
+    class HealthCheckManager {
+        -db *gorm.DB
+        -ticker *time.Ticker
+        -done chan bool
+        -interval time.Duration
+        -failThreshold int
+        -timeout time.Duration
+        +Start()
+        +Stop()
+        -checkAllNodes()
+        -checkNode(node *CdnNode) error
+        -updateNodeStatus(node *CdnNode, latency int, success bool)
+    }
+
+    RedirectHandler --> CdnNode : queries
+    RedirectHandler --> RedirectRule : queries
+    RedirectHandler --> AccessLog : creates
+    AuthHandler --> AdminUser : queries
+    JWTMiddleware --> AdminUser : validates
+    RateLimitMiddleware --> AdminUser : rate limits
+    HealthCheckManager --> CdnNode : monitors
+```
+
+---
+
+```mermaid
+classDiagram
+    class ServerConfig {
+        +string Host
+        +int Port
+        +string EmbedFrontend
+    }
+
+    class DatabaseConfig {
+        +string Path
+    }
+
+    class JWTConfig {
+        +string Secret
+        +int ExpiryHours
+    }
+
+    class AdminConfig {
+        +string Username
+        +string Password
+    }
+
+    class HealthCheckConfig {
+        +bool Enabled
+        +int IntervalSeconds
+        +int FailThreshold
+        +int TimeoutSeconds
+    }
+
+    class RateLimitConfig {
+        +bool Enabled
+        +int RequestsPerMinute
+        +[]string Whitelist
+    }
+
+    class AppConfig {
+        +ServerConfig Server
+        +DatabaseConfig Database
+        +JWTConfig JWT
+        +AdminConfig Admin
+        +HealthCheckConfig HealthCheck
+        +RateLimitConfig RateLimit
+    }
+
+    AppConfig --> ServerConfig
+    AppConfig --> DatabaseConfig
+    AppConfig --> JWTConfig
+    AppConfig --> AdminConfig
+    AppConfig --> HealthCheckConfig
+    AppConfig --> RateLimitConfig
+```

@@ -1,0 +1,11 @@
+node_modules
+dist
+*.db
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+.git
+.gitignore

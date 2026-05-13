@@ -1,0 +1,20 @@
+version: '3.8'
+services:
+  veer:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - veer-data:/app/data
+    environment:
+      - CDNC_SERVER_HOST=0.0.0.0
+      - CDNC_SERVER_PORT=8080
+      - CDNC_DB_PATH=/app/data/veer.db
+      - CDNC_JWT_SECRET=change-me-in-production-256bits
+      - CDNC_ADMIN_PASSWORD=admin123
+    restart: unless-stopped
+
+volumes:
+  veer-data:

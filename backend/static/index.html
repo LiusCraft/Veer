@@ -1,0 +1,829 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Veer 管理系统</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    [v-cloak] { display: none; }
+    .fade-enter-active, .fade-leave-active { transition: opacity 0.3s ease; }
+    .fade-enter-from, .fade-leave-to { opacity: 0; }
+    /* 自定义滚动条 */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+  </style>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            primary: {
+              50: '#eff6ff',
+              100: '#dbeafe',
+              200: '#bfdbfe',
+              300: '#93c5fd',
+              400: '#60a5fa',
+              500: '#3b82f6',
+              600: '#2563eb',
+              700: '#1d4ed8',
+              800: '#1e40af',
+              900: '#1e3a8a',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-gray-50 text-gray-900 antialiased">
+
+<div id="app" v-cloak>
+
+  <!-- ========== 登录页面 ========== -->
+  <div v-if="!isAuth" class="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-600 via-primary-700 to-indigo-800 relative overflow-hidden">
+    <!-- 装饰性背景元素 -->
+    <div class="absolute top-20 left-10 w-72 h-72 bg-white/5 rounded-full blur-3xl"></div>
+    <div class="absolute bottom-10 right-10 w-96 h-96 bg-indigo-400/10 rounded-full blur-3xl"></div>
+
+    <div class="relative z-10 w-full max-w-md mx-4">
+      <!-- 登录卡片 -->
+      <div class="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl p-8">
+        <!-- Logo 区域 -->
+        <div class="text-center mb-8">
+          <div class="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-gradient-to-br from-primary-500 to-primary-700 shadow-lg shadow-primary-500/30 mb-4">
+            <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+          </div>
+          <h1 class="text-2xl font-bold text-gray-900">Veer</h1>
+          <p class="text-sm text-gray-500 mt-1">管理系统登录</p>
+        </div>
+
+        <!-- 错误提示 -->
+        <div v-if="loginError" class="mb-5 p-3.5 rounded-xl bg-red-50 border border-red-200 flex items-start gap-2.5">
+          <svg class="w-5 h-5 text-red-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+          <span class="text-sm text-red-700">{{ loginError }}</span>
+        </div>
+
+        <!-- 登录表单 -->
+        <form @submit.prevent="doLogin">
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1.5">用户名</label>
+              <input
+                v-model="loginForm.username"
+                type="text"
+                placeholder="请输入用户名"
+                :disabled="loginLoading"
+                autocomplete="username"
+                class="w-full px-4 py-2.5 rounded-xl border border-gray-300 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 outline-none transition-all disabled:bg-gray-100"
+              />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-gray-700 mb-1.5">密码</label>
+              <div class="relative">
+                <input
+                  v-model="loginForm.password"
+                  :type="showPassword ? 'text' : 'password'"
+                  placeholder="请输入密码"
+                  :disabled="loginLoading"
+                  autocomplete="current-password"
+                  @keyup.enter="doLogin"
+                  class="w-full px-4 py-2.5 pr-11 rounded-xl border border-gray-300 focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 outline-none transition-all disabled:bg-gray-100"
+                />
+                <button type="button" @click="showPassword = !showPassword" class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 p-0.5">
+                  <svg v-if="!showPassword" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                  <svg v-else class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 01.563-2.029m5.832.922a3 3 0 104.244-4.215m-6.008 5.168A3 3 0 011.656 9.34m10.668 0l-.328-.165m-6.008 5.168L3.5 3.5"/></svg>
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              :disabled="loginLoading"
+              class="w-full py-2.5 px-4 bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 text-white font-semibold rounded-xl shadow-lg shadow-primary-500/25 transition-all duration-200 disabled:opacity-60 disabled:cursor-not-allowed"
+            >
+              <span v-if="loginLoading" class="flex items-center justify-center gap-2">
+                <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="3" class="opacity-25"/><path d="M4 12a8 8 0 018-8" fill="none" stroke="currentColor" stroke-width="3" class="opacity-75"/></svg>
+                登录中...
+              </span>
+              <span v-else>登 录</span>
+            </button>
+          </div>
+        </form>
+      </div>
+      <p class="text-center text-xs text-white/40 mt-6">Veer v2.0.0 &middot; Built with Go + Gin</p>
+    </div>
+  </div>
+
+  <!-- ========== 主界面（已登录） ========== -->
+  <div v-else class="flex h-screen overflow-hidden">
+    <!-- 侧边导航栏 -->
+    <aside class="hidden md:flex md:w-60 lg:w-64 flex-col bg-white border-r border-gray-200 shadow-sm z-20">
+      <!-- Logo -->
+      <div class="flex items-center gap-3 px-6 py-5 border-b border-gray-100">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center shadow-md shadow-primary-500/25">
+          <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+        </div>
+        <div>
+          <h1 class="text-lg font-bold text-gray-900 leading-tight">Veer</h1>
+          <p class="text-[11px] text-gray-400 -mt-0.5">管理系统</p>
+        </div>
+      </div>
+
+      <!-- 导航菜单 -->
+      <nav class="flex-1 px-3 py-4 space-y-1 overflow-y-auto">
+        <button
+          v-for="item in navItems"
+          :key="item.path"
+          @click="currentPage = item.path"
+          :class="[
+            'w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all duration-150',
+            currentPage === item.path
+              ? 'bg-primary-50 text-primary-700 shadow-sm'
+              : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+          ]"
+        >
+          <span v-html="item.icon" class="w-5 h-5 shrink-0"></span>
+          {{ item.label }}
+        </button>
+      </nav>
+
+      <!-- 底部信息 -->
+      <div class="px-6 py-4 border-t border-gray-100">
+        <p class="text-[11px] text-gray-400">Veer v2.0.0</p>
+      </div>
+    </aside>
+
+    <!-- 移动端顶部栏 -->
+    <div class="md:hidden fixed top-0 left-0 right-0 z-30 bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shadow-sm">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-500 to-primary-700 flex items-center justify-center">
+        <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+      </div>
+      <span class="font-semibold text-gray-900">Veer</span>
+      <span class="ml-auto text-sm text-gray-500">{{ currentUser }}</span>
+      <button @click="doLogout" class="text-red-500 hover:text-red-600 p-1" title="退出登录">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+      </button>
+    </div>
+
+    <!-- 移动端底部导航 -->
+    <div class="md:hidden fixed bottom-0 left-0 right-0 z-30 bg-white border-t border-gray-200 flex justify-around py-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+      <button v-for="item in navItems.slice(0,4)" :key="'mobile-'+item.path" @click="currentPage = item.path" :class="['flex flex-col items-center gap-0.5 px-3 py-1 rounded-lg text-[11px]', currentPage === item.path ? 'text-primary-600' : 'text-gray-400']">
+        <span v-html="item.icon" class="w-5 h-5"></span>
+        {{ item.label }}
+      </button>
+    </div>
+
+    <!-- ======== 主内容区 ======== -->
+    <main class="flex-1 flex flex-col overflow-hidden bg-gray-50/50 pt-16 md:pt-0 pb-16 md:pb-0">
+      <!-- 顶栏 -->
+      <header class="shrink-0 bg-white border-b border-gray-200 px-4 sm:px-6 py-3 flex items-center gap-3">
+        <h2 class="text-base font-semibold text-gray-800">{{ pageTitle }}</h2>
+        <div class="ml-auto flex items-center gap-2 hidden md:flex">
+          <span class="text-sm text-gray-500">{{ currentUser }}</span>
+          <button @click="doLogout" class="p-1.5 rounded-lg text-gray-400 hover:text-red-500 hover:bg-red-50 transition-colors" title="退出登录">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+          </button>
+        </div>
+      </header>
+
+      <!-- 页面内容 -->
+      <div class="flex-1 overflow-y-auto p-4 sm:p-6">
+        <!-- ====== 仪表盘页面 ====== -->
+        <div v-if="currentPage === '/dashboard'">
+          <!-- 统计卡片 -->
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            <div v-for="(stat, idx) in dashboardStats" :key="idx" class="bg-white rounded-xl border border-gray-200 p-5 shadow-sm hover:shadow-md transition-shadow">
+              <div class="flex items-start justify-between">
+                <div>
+                  <p class="text-xs font-medium text-gray-500 uppercase tracking-wider">{{ stat.label }}</p>
+                  <p class="mt-1.5 text-2xl font-bold" :class="stat.color">{{ formatNum(stat.value) }}</p>
+                  <p class="mt-0.5 text-[11px] text-gray-400">{{ stat.desc }}</p>
+                </div>
+                <div class="w-10 h-10 rounded-xl flex items-center justify-center text-white text-lg" :style="{background: stat.bgColor}">
+                  <span v-html="stat.icon"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 最近访问记录 -->
+          <div class="bg-white rounded-xl border border-gray-200 shadow-sm">
+            <div class="px-5 py-4 border-b border-gray-100 flex items-center justify-between">
+              <h3 class="font-semibold text-gray-800 text-sm">最近访问记录</h3>
+              <span class="text-xs text-gray-400">{{ recentLogs.length }} 条</span>
+            </div>
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead><tr class="bg-gray-50/80">
+                  <th class="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">规则 Key</th>
+                  <th class="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">节点</th>
+                  <th class="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">域名</th>
+                  <th class="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase tracking-wider">时间</th>
+                </tr></thead>
+                <tbody>
+                  <tr v-for="log in recentLogs" :key="log.id" class="border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
+                    <td class="px-4 py-2.5 font-mono text-xs font-semibold text-primary-600">{{ log.rule_key }}</td>
+                    <td class="px-4 py-2.5 text-gray-700">{{ log.node_name || '-' }}</td>
+                    <td class="px-4 py-2.5 text-gray-500 text-xs max-w-[160px] truncate">{{ log.domain || '-' }}</td>
+                    <td class="px-4 py-2.5 text-gray-400 text-xs whitespace-nowrap">{{ fmtTime(log.created_at) }}</td>
+                  </tr>
+                  <tr v-if="recentLogs.length === 0"><td colspan="4" class="px-4 py-8 text-center text-sm text-gray-400">暂无访问记录</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ====== 节点管理页面 ====== -->
+        <div v-if="currentPage === '/nodes'">
+          <!-- 操作栏 -->
+          <div class="flex flex-wrap items-center gap-3 mb-4">
+            <button @click="openNodeModal()" class="inline-flex items-center gap-1.5 px-3.5 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg shadow-sm transition-colors">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+              新增节点
+            </button>
+          </div>
+
+          <!-- 节点表格 -->
+          <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead><tr class="bg-gray-50/80">
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">ID</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">名称</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">URL</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">权重</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">区域</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">状态</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">延迟</th>
+                  <th class="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">操作</th>
+                </tr></thead>
+                <tbody>
+                  <tr v-for="node in nodesList" :key="node.id" class="border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
+                    <td class="px-4 py-3 text-gray-400 text-xs">{{ node.id }}</td>
+                    <td class="px-4 py-3 font-medium text-gray-800">{{ node.name }}</td>
+                    <td class="px-4 py-3 text-gray-500 text-xs font-mono max-w-[220px] truncate">{{ node.url }}</td>
+                    <td class="px-4 py-3 text-gray-600">{{ node.weight }}</td>
+                    <td class="px-4 py-3 text-gray-500 text-xs">{{ node.region || '-' }}</td>
+                    <td class="px-4 py-3">
+                      <span :class="[
+                        'inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium',
+                        node.status === 'active' ? 'bg-green-50 text-green-700 ring-1 ring-green-600/20' : 'bg-gray-100 text-gray-500'
+                      ]">{{ node.status === 'active' ? '活跃' : '停用' }}</span>
+                    </td>
+                    <td class="px-4 py-3 text-xs" :class="node.latency > 0 ? (node.latency < 200 ? 'text-green-600' : node.latency < 500 ? 'text-yellow-600' : 'text-red-600') : 'text-gray-400'">
+                      {{ node.latency > 0 ? node.latency + 'ms' : '-' }}
+                      <span v-if="node.consecutive_fails > 0 && node.consecutive_fails < 3" class="ml-1 text-yellow-500">({{ node.consecutive_fails }})</span>
+                    </td>
+                    <td class="px-4 py-3 text-right">
+                      <div class="flex items-center justify-end gap-1">
+                        <button @click="testNode(node)" :disabled="testingNodeId === node.id" class="p-1.5 rounded-lg text-blue-500 hover:bg-blue-50 transition-colors" title="测试连通性">
+                          <svg :class="{'animate-spin': testingNodeId === node.id}" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4"/></svg>
+                        </button>
+                        <button @click="openNodeModal(node)" class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="编辑">
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                        </button>
+                        <button @click="deleteItem('nodes', node.id)" class="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="删除">
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr v-if="nodesList.length === 0"><td colspan="8" class="px-4 py-10 text-center text-sm text-gray-400">暂无节点数据</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ====== 规则管理页面 ====== -->
+        <div v-if="currentPage === '/rules'">
+          <!-- 操作栏 -->
+          <div class="flex flex-wrap items-center gap-3 mb-4">
+            <button @click="openRuleModal()" class="inline-flex items-center gap-1.5 px-3.5 py-2 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg shadow-sm transition-colors">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+              新增规则
+            </button>
+          </div>
+
+          <!-- 规则表格 -->
+          <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead><tr class="bg-gray-50/80">
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">ID</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Key</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">描述</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">域名</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">策略</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">命中数</th>
+                  <th class="text-right px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">操作</th>
+                </tr></thead>
+                <tbody>
+                  <tr v-for="rule in rulesList" :key="rule.id" class="border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
+                    <td class="px-4 py-3 text-gray-400 text-xs">{{ rule.id }}</td>
+                    <td class="px-4 py-3 font-mono text-xs font-semibold text-primary-600">{{ rule.key }}</td>
+                    <td class="px-4 py-3 text-gray-700">{{ rule.description || '-' }}</td>
+                    <td class="px-4 py-3 text-gray-500 text-xs">{{ rule.domain || '<span class=\'text-gray-400\'>通用</span>' }}</td>
+                    <td class="px-4 py-3">
+                      <span :class="strategyClass(rule.strategy)" class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium">{{ strategyLabel(rule.strategy) }}</span>
+                    </td>
+                    <td class="px-4 py-3 text-gray-600 text-xs tabular-nums">{{ rule.hit_count?.toLocaleString() ?? 0 }}</td>
+                    <td class="px-4 py-3 text-right">
+                      <div class="flex items-center justify-end gap-1">
+                        <button @click="openRuleModal(rule)" class="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="编辑">
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/></svg>
+                        </button>
+                        <button @click="deleteItem('rules', rule.id)" class="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors" title="删除">
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/></svg>
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr v-if="rulesList.length === 0"><td colspan="7" class="px-4 py-10 text-center text-sm text-gray-400">暂无规则数据</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ====== 访问日志页面 ====== -->
+        <div v-if="currentPage === '/logs'">
+          <!-- 筛选栏 -->
+          <div class="bg-white rounded-xl border border-gray-200 shadow-sm p-4 mb-4">
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">规则 Key</label>
+                <input v-model="logFilter.rule_key" type="text" placeholder="筛选规则 Key" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 outline-none" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">域名</label>
+                <input v-model="logFilter.domain" type="text" placeholder="筛选域名" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 outline-none" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">开始日期</label>
+                <input v-model="logFilter.start_date" type="date" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 outline-none" />
+              </div>
+              <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">结束日期</label>
+                <input v-model="logFilter.end_date" type="date" class="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 outline-none" />
+              </div>
+              <div class="flex items-end gap-2">
+                <button @click="loadLogs(1)" class="px-4 py-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium rounded-lg transition-colors">查询</button>
+                <button @click="resetLogFilter()" class="px-4 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-600 text-sm font-medium rounded-lg transition-colors">重置</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 日志表格 -->
+          <div class="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+            <div class="overflow-x-auto">
+              <table class="w-full text-sm">
+                <thead><tr class="bg-gray-50/80">
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">ID</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">规则 Key</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">域名</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">路径</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">节点</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">客户端 IP</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">状态码</th>
+                  <th class="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">时间</th>
+                </tr></thead>
+                <tbody>
+                  <tr v-for="log in logsData" :key="log.id" class="border-b border-gray-50 last:border-0 hover:bg-gray-50/50">
+                    <td class="px-4 py-2.5 text-gray-400 text-xs">{{ log.id }}</td>
+                    <td class="px-4 py-2.5 font-mono text-xs font-semibold text-primary-600">{{ log.rule_key }}</td>
+                    <td class="px-4 py-2.5 text-gray-500 text-xs max-w-[140px] truncate">{{ log.domain || '-' }}</td>
+                    <td class="px-4 py-2.5 text-gray-500 text-xs max-w-[120px] truncate font-mono">{{ log.path || '-' }}</td>
+                    <td class="px-4 py-2.5 text-gray-700 text-xs">{{ log.node_name || '-' }}</td>
+                    <td class="px-4 py-2.5 text-gray-500 text-xs font-mono">{{ log.client_ip || '-' }}</td>
+                    <td class="px-4 py-2.5">
+                      <span :class="log.status_code === 302 ? 'text-green-600' : 'text-orange-500'" class="text-xs font-medium">{{ log.status_code }}</span>
+                    </td>
+                    <td class="px-4 py-2.5 text-gray-400 text-xs whitespace-nowrap">{{ fmtTime(log.created_at) }}</td>
+                  </tr>
+                  <tr v-if="logsData.length === 0"><td colspan="8" class="px-4 py-10 text-center text-sm text-gray-400">暂无日志数据</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <!-- 分页 -->
+            <div class="px-4 py-3 border-t border-gray-100 flex items-center justify-between">
+              <span class="text-xs text-gray-400">共 {{ logsTotal }} 条，第 {{ logsPage }} / {{ Math.ceil(logsTotal/logsPageSize) || 1 }} 页</span>
+              <div class="flex gap-1.5">
+                <button @click="loadLogs(logsPage - 1)" :disabled="logsPage <= 1" class="px-3 py-1 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">上一页</button>
+                <button @click="loadLogs(logsPage + 1)" :disabled="logsPage * logsPageSize >= logsTotal" class="px-3 py-1 text-xs rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed">下一页</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ====== 节点弹窗 ====== -->
+  <div v-if="showNodeModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" @click.self="showNodeModal = false">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4">
+      <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+        <h3 class="font-semibold text-gray-900">{{ editingNode ? '编辑节点' : '新增节点' }}</h3>
+        <button @click="showNodeModal = false" class="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="p-6 space-y-4">
+        <div><label class="block text-sm font-medium text-gray-700 mb-1">名称 <span class="text-red-400">*</span></label><input v-model="nodeForm.name" type="text" placeholder="如：阿里云-华东" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 outline-none" /></div>
+        <div><label class="block text-sm font-medium text-gray-700 mb-1">URL <span class="text-red-400">*</span></label><input v-model="nodeForm.url" type="url" placeholder="https://cdn.example.com" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 outline-none" /></div>
+        <div class="grid grid-cols-2 gap-4">
+          <div><label class="block text-sm font-medium text-gray-700 mb-1">权重 (1-100)</label><input v-model.number="nodeForm.weight" type="number" min="1" max="100" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 outline-none" /></div>
+          <div><label class="block text-sm font-medium text-gray-700 mb-1">区域</label><input v-model="nodeForm.region" type="text" placeholder="如：华东" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 outline-none" /></div>
+        </div>
+      </div>
+      <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-2.5">
+        <button @click="showNodeModal = false" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">取消</button>
+        <button @click="saveNode" :disabled="saving" class="px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors disabled:opacity-50">{{ saving ? '保存中...' : '保存' }}</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ====== 规则弹窗 ====== -->
+  <div v-if="showRuleModal" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm" @click.self="showRuleModal = false">
+    <div class="bg-white rounded-2xl shadow-2xl w-full max-w-lg mx-4">
+      <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+        <h3 class="font-semibold text-gray-900">{{ editingRule ? '编辑规则' : '新增规则' }}</h3>
+        <button @click="showRuleModal = false" class="p-1 rounded-lg text-gray-400 hover:text-gray-600 hover:bg-gray-100">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="p-6 space-y-4">
+        <div><label class="block text-sm font-medium text-gray-700 mb-1">Key <span class="text-red-400">*</span></label><input v-model="ruleForm.key" :disabled="!!editingRule" type="text" placeholder="如：video（小写字母、数字、连字符）" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 outline-none disabled:bg-gray-50" /><p v-if="editingRule" class="text-[11px] text-gray-400 mt-0.5">创建后不可修改</p></div>
+        <div><label class="block text-sm font-medium text-gray-700 mb-1">描述</label><input v-model="ruleForm.description" type="text" placeholder="规则描述" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 outline-none" /></div>
+        <div><label class="block text-sm font-medium text-gray-700 mb-1">域名（可选）</label><input v-model="ruleForm.domain" type="text" placeholder="留空表示通用规则" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 outline-none" /></div>
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">负载策略</label>
+            <select v-model="ruleForm.strategy" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 outline-none bg-white">
+              <option value="round-robin">轮询</option>
+              <option value="weighted">加权</option>
+              <option value="random">随机</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">节点 ID 列表 <span class="text-red-400">*</span></label>
+            <input v-model="ruleForm.node_ids_str" type="text" placeholder="如：[1,2,3]" class="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:border-primary-500 focus:ring-1 focus:ring-primary-500/20 outline-none" />
+          </div>
+        </div>
+      </div>
+      <div class="px-6 py-4 border-t border-gray-100 flex justify-end gap-2.5">
+        <button @click="showRuleModal = false" class="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors">取消</button>
+        <button @click="saveRule" :disabled="saving" class="px-4 py-2 text-sm font-medium text-white bg-primary-600 hover:bg-primary-700 rounded-lg transition-colors disabled:opacity-50">{{ saving ? '保存中...' : '保存' }}</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast 提示 -->
+  <transition name="fade">
+    <div v-if="toast.show" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] px-5 py-2.5 rounded-xl shadow-lg text-sm font-medium text-white" :class="toast.type === 'error' ? 'bg-red-500' : 'bg-gray-800'">
+      {{ toast.message }}
+    </div>
+  </transition>
+</div>
+
+<script>
+// ========== API 工具函数 ==========
+const API_BASE = '/api';
+
+function getHeaders() {
+  const token = localStorage.getItem('veer_token');
+  return token ? { 'Authorization': 'Bearer ' + token } : {};
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: { ...getHeaders(), 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(API_BASE + path, opts);
+  // 401 处理：清除 token 跳转登录
+  if (res.status === 401) {
+    localStorage.removeItem('veer_token');
+    location.reload();
+    throw new Error('未授权');
+  }
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || '请求失败');
+  return data;
+}
+
+// ========== Vue 应用 ==========
+const app = new Vue({
+  data() {
+    return {
+      // 认证
+      isAuth: false,
+      currentUser: '',
+      loginForm: { username: '', password: '' },
+      loginError: '',
+      loginLoading: false,
+      showPassword: false,
+
+      // 导航
+      currentPage: '/dashboard',
+      navItems: [
+        { path: '/dashboard', label: '概览仪表盘', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/></svg>' },
+        { path: '/nodes', label: 'CDN 节点管理', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/></svg>' },
+        { path: '/rules', label: '跳转规则管理', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6"/></svg>' },
+        { path: '/logs', label: '访问日志', icon: '<svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>' },
+      ],
+
+      // 仪表盘数据
+      dashboardStats: [
+        { label: '总跳转次数', value: 0, desc: '累计 302 跳转', color: 'text-blue-600', bgColor: 'linear-gradient(135deg,#3b82f6,#2563eb)', icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>' },
+        { label: '活跃节点数', value: 0, desc: '在线可用节点', color: 'text-emerald-600', bgColor: 'linear-gradient(135deg,#059669,#047857)', icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"/></svg>' },
+        { label: '停用节点数', value: 0, desc: '离线或异常节点', color: 'text-gray-500', bgColor: 'linear-gradient(135deg,#6b7280,#4b5563)', icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"/></svg>' },
+        { label: '今日请求量', value: 0, desc: '今日 CDN 请求数', color: 'text-amber-600', bgColor: 'linear-gradient(135deg,#d97706,#b45309)', icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>' },
+        { label: '规则数量', value: 0, desc: '已配置跳转规则', color: 'text-violet-600', bgColor: 'linear-gradient(135deg,#7c3aed,#6d28d9)', icon: '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/></svg>' },
+      ],
+      recentLogs: [],
+
+      // 节点数据
+      nodesList: [],
+      showNodeModal: false,
+      editingNode: null,
+      nodeForm: { name: '', url: '', weight: 1, region: '', status: 'active' },
+      saving: false,
+      testingNodeId: null,
+
+      // 规则数据
+      rulesList: [],
+      showRuleModal: false,
+      editingRule: null,
+      ruleForm: { key: '', description: '', domain: '', strategy: 'round-robin', node_ids_str: '' },
+
+      // 日志数据
+      logsData: [],
+      logsTotal: 0,
+      logsPage: 1,
+      logsPageSize: 20,
+      logFilter: { rule_key: '', domain: '', start_date: '', end_date: '' },
+
+      // Toast
+      toast: { show: false, message: '', type: 'success' },
+    };
+  },
+
+  computed: {
+    pageTitle() {
+      const item = this.navItems.find(i => i.path === this.currentPage);
+      return item ? item.label : 'Veer';
+    },
+  },
+
+  async created() {
+    await this.checkAuth();
+    if (this.isAuth) {
+      this.loadDashboard();
+      this.loadNodes();
+      this.loadRules();
+    }
+  },
+
+  methods: {
+    // ---- 认证 ----
+    async checkAuth() {
+      const token = localStorage.getItem('veer_token');
+      if (!token) return;
+      try {
+        const data = await api('get', '/auth/me');
+        this.isAuth = true;
+        this.currentUser = data.username;
+      } catch (e) {
+        localStorage.removeItem('veer_token');
+        this.isAuth = false;
+      }
+    },
+
+    async doLogin() {
+      if (!this.loginForm.username || !this.loginForm.password) {
+        this.loginError = '请输入用户名和密码';
+        return;
+      }
+      this.loginError = '';
+      this.loginLoading = true;
+      try {
+        const data = await api('post', '/auth/login', {
+          username: this.loginForm.username,
+          password: this.loginForm.password,
+        });
+        localStorage.setItem('veer_token', data.token);
+        this.isAuth = true;
+        this.currentUser = data.username;
+        this.loadDashboard();
+        this.loadNodes();
+        this.loadRules();
+      } catch (e) {
+        this.loginError = e.message || '登录失败';
+      } finally {
+        this.loginLoading = false;
+      }
+    },
+
+    doLogout() {
+      api('post', '/auth/logout').catch(() => {});
+      localStorage.removeItem('veer_token');
+      this.isAuth = false;
+      this.currentUser = '';
+    },
+
+    // ---- 仪表盘 ----
+    async loadDashboard() {
+      try {
+        const res = await api('get', '/stats/overview');
+        const d = res.data;
+        this.dashboardStats[0].value = d.total_redirects || 0;
+        this.dashboardStats[1].value = d.active_nodes || 0;
+        this.dashboardStats[2].value = d.inactive_nodes || 0;
+        this.dashboardStats[3].value = d.today_requests || 0;
+        this.dashboardStats[4].value = d.total_rules || 0;
+
+        // 加载最近日志
+        const logsRes = await api('get', '/stats/logs?page_size=5');
+        this.recentLogs = logsRes.data || [];
+      } catch (e) {
+        console.error('加载仪表盘失败:', e);
+      }
+    },
+
+    // ---- 节点 ----
+    async loadNodes() {
+      try {
+        const res = await api('get', '/nodes');
+        this.nodesList = res.data || [];
+      } catch (e) {
+        console.error('加载节点失败:', e);
+      }
+    },
+
+    openNodeModal(node) {
+      if (node) {
+        this.editingNode = node;
+        this.nodeForm = { name: node.name, url: node.url, weight: node.weight, region: node.region || '', status: node.status };
+      } else {
+        this.editingNode = null;
+        this.nodeForm = { name: '', url: '', weight: 1, region: '', status: 'active' };
+      }
+      this.showNodeModal = true;
+    },
+
+    async saveNode() {
+      if (!this.nodeForm.name || !this.nodeForm.url) return this.showToast('请填写名称和 URL', 'error');
+      this.saving = true;
+      try {
+        if (this.editingNode) {
+          await api('put', '/nodes/' + this.editingNode.id, this.nodeForm);
+          this.showToast('节点更新成功');
+        } else {
+          await api('post', '/nodes', this.nodeForm);
+          this.showToast('节点创建成功');
+        }
+        this.showNodeModal = false;
+        this.loadNodes();
+        this.loadDashboard();
+      } catch (e) {
+        this.showToast(e.message || '保存失败', 'error');
+      } finally {
+        this.saving = false;
+      }
+    },
+
+    async testNode(node) {
+      this.testingNodeId = node.id;
+      try {
+        const res = await api('post', '/nodes/' + node.id + '/test');
+        const latency = res.latency;
+        if (latency >= 0) {
+          this.showToast(`节点 "${node.name}" 响应正常，延迟 ${latency}ms`);
+        } else {
+          this.showToast(`节点 "${node.name}" 无法连接`, 'error');
+        }
+        this.loadNodes();
+      } catch (e) {
+        this.showToast(e.message || '测试失败', 'error');
+      } finally {
+        this.testingNodeId = null;
+      }
+    },
+
+    // ---- 规则 ----
+    async loadRules() {
+      try {
+        const res = await api('get', '/rules');
+        this.rulesList = res.data || [];
+      } catch (e) {
+        console.error('加载规则失败:', e);
+      }
+    },
+
+    openRuleModal(rule) {
+      if (rule) {
+        this.editingRule = rule;
+        this.ruleForm = {
+          key: rule.key, description: rule.description || '', domain: rule.domain || '',
+          strategy: rule.strategy, node_ids_str: rule.node_ids,
+        };
+      } else {
+        this.editingRule = null;
+        this.ruleForm = { key: '', description: '', domain: '', strategy: 'round-robin', node_ids_str: '' };
+      }
+      this.showRuleModal = true;
+    },
+
+    async saveRule() {
+      if (!this.ruleForm.key || !this.ruleForm.node_ids_str) return this.showToast('请填写 Key 和节点 ID 列表', 'error');
+      this.saving = true;
+      try {
+        const body = {
+          key: this.ruleForm.key, description: this.ruleForm.description,
+          domain: this.ruleForm.domain, strategy: this.ruleForm.strategy,
+          node_ids: this.ruleForm.node_ids_str,
+        };
+        if (this.editingRule) {
+          await api('put', '/rules/' + this.editingRule.id, body);
+          this.showToast('规则更新成功');
+        } else {
+          await api('post', '/rules', body);
+          this.showToast('规则创建成功');
+        }
+        this.showRuleModal = false;
+        this.loadRules();
+        this.loadDashboard();
+      } catch (e) {
+        this.showToast(e.message || '保存失败', 'error');
+      } finally {
+        this.saving = false;
+      }
+    },
+
+    // ---- 日志 ----
+    async loadLogs(page) {
+      this.logsPage = page || 1;
+      const params = new URLSearchParams({
+        page: this.logsPage,
+        page_size: this.logsPageSize,
+      });
+      if (this.logFilter.rule_key) params.append('rule_key', this.logFilter.rule_key);
+      if (this.logFilter.domain) params.append('domain', this.logFilter.domain);
+      if (this.logFilter.start_date) params.append('start_date', this.logFilter.start_date);
+      if (this.logFilter.end_date) params.append('end_date', this.logFilter.end_date);
+
+      try {
+        const res = await api('get', '/stats/logs?' + params.toString());
+        this.logsData = res.data || [];
+        this.logsTotal = res.total || 0;
+      } catch (e) {
+        console.error('加载日志失败:', e);
+      }
+    },
+
+    resetLogFilter() {
+      this.logFilter = { rule_key: '', domain: '', start_date: '', end_date: '' };
+      this.loadLogs(1);
+    },
+
+    // ---- 通用 ----
+    async deleteItem(type, id) {
+      if (!confirm('确定要删除吗？此操作不可撤销。')) return;
+      try {
+        await api('delete', '/' + type + '/' + id);
+        this.showToast('删除成功');
+        if (type === 'nodes') this.loadNodes();
+        else if (type === 'rules') this.loadRules();
+        this.loadDashboard();
+      } catch (e) {
+        this.showToast(e.message || '删除失败', 'error');
+      }
+    },
+
+    showToast(message, type = 'success') {
+      this.toast = { show: true, message, type };
+      setTimeout(() => { this.toast.show = false; }, 2500);
+    },
+
+    formatNum(n) { return n != null ? n.toLocaleString() : '0'; },
+    fmtTime(s) {
+      if (!s) return '-';
+      const d = new Date(s);
+      return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    },
+    strategyLabel(s) { return s === 'weighted' ? '加权' : s === 'random' ? '随机' : '轮询'; },
+    strategyClass(s) {
+      return s === 'weighted' ? 'bg-purple-50 text-purple-700 ring-1 ring-purple-600/20' :
+             s === 'random' ? 'bg-amber-50 text-amber-700 ring-1 ring-amber-600/20' :
+             'bg-blue-50 text-blue-700 ring-1 ring-blue-600/20';
+    },
+  },
+});
+</script>
+<script src="https://unpkg.com/vue@2/dist/vue.min.js"></script>
+</body>
+</html>

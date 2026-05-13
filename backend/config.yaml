@@ -1,0 +1,33 @@
+# Veer 配置文件
+# 环境变量覆盖: 使用 CDNC_ 前缀，例如 CDNC_SERVER_PORT=9000
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+database:
+  path: "./veer.db"
+
+jwt:
+  secret: "change-me-in-production-256bits!"
+  expiry_hours: 24
+
+admin:
+  username: "admin"
+  password: "admin123"
+
+health_check:
+  enabled: true
+  interval_seconds: 30
+  fail_threshold: 3
+  timeout_seconds: 5
+
+rate_limit:
+  enabled: true
+  requests_per_minute: 60
+  whitelist:
+    - "127.0.0.1"
+    - "::1"
+
+cache:
+  max_age_seconds: 300
