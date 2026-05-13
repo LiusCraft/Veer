@@ -9,3 +9,8 @@ frontend/dist/
 backend/dist/
 backend/cdn302
 backend/veer
+backend/scheduler
+backend/edge
+
+# Runtime data
+backend/data/

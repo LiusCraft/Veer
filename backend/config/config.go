@@ -46,21 +46,25 @@ func SeedData(db *gorm.DB) {
 		// Create default cluster first
 		defaultCluster := models.Cluster{
 			Name:        "默认集群",
-			Description: "系统默认集群，兼容 v2 升级",
-			Region:      "其他",
-			ISP:         "其他",
+			Description: "系统默认集群",
+			Region:      []string{"其他"},
+			ISP:         []string{"其他"},
 			Strategy:    "round-robin",
 			Status:      "active",
 		}
 		db.Create(&defaultCluster)
 
 		nodes := []models.CdnNode{
-			{Name: "Edge节点-华东", URL: "http://localhost:8082", Weight: 3, Region: "华东", Status: "active", Latency: 0, ClusterID: defaultCluster.ID},
-			{Name: "Edge节点-华南", URL: "http://localhost:8083", Weight: 2, Region: "华南", Status: "active", Latency: 0, ClusterID: defaultCluster.ID},
+			{Name: "Edge节点-华东", URL: "http://localhost:8082", Weight: 3, Region: "华东", Status: "active", Latency: 0},
+			{Name: "Edge节点-华南", URL: "http://localhost:8083", Weight: 2, Region: "华南", Status: "active", Latency: 0},
 		}
 		if result := db.Create(&nodes); result.Error != nil {
 			log.Printf("Failed to seed nodes: %v", result.Error)
 			return
+		}
+		// 种子节点关联到默认集群
+		for _, n := range nodes {
+			db.Create(&models.NodeCluster{NodeID: n.ID, ClusterID: defaultCluster.ID})
 		}
 		log.Println("Seeded 2 CDN nodes")
 

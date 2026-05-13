@@ -98,7 +98,8 @@ func ListNodes(db *gorm.DB) gin.HandlerFunc {
 
 		if clusterID := c.Query("cluster_id"); clusterID != "" {
 			if cid, err := strconv.ParseUint(clusterID, 10, 64); err == nil {
-				query = query.Where("cluster_id = ?", cid)
+				query = query.Joins("JOIN node_clusters ON node_clusters.node_id = cdn_nodes.id").
+					Where("node_clusters.cluster_id = ?", cid)
 			}
 		}
 		if region := c.Query("region"); region != "" {
@@ -122,7 +123,35 @@ func ListNodes(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		c.JSON(http.StatusOK, gin.H{"data": nodes, "total": len(nodes)})
+
+		// 为每个节点查询关联集群ID列表
+		nodeIDs := make([]uint, len(nodes))
+		for i, n := range nodes {
+			nodeIDs[i] = n.ID
+		}
+		var nodeClusters []models.NodeCluster
+		if len(nodeIDs) > 0 {
+			db.Where("node_id IN ?", nodeIDs).Find(&nodeClusters)
+		}
+		clusterMap := make(map[uint][]uint)
+		for _, nc := range nodeClusters {
+			clusterMap[nc.NodeID] = append(clusterMap[nc.NodeID], nc.ClusterID)
+		}
+
+		type nodeWithClusters struct {
+			models.CdnNode
+			ClusterIDs []uint `json:"cluster_ids"`
+		}
+		result := make([]nodeWithClusters, len(nodes))
+		for i, n := range nodes {
+			ids := clusterMap[n.ID]
+			if ids == nil {
+				ids = []uint{}
+			}
+			result[i] = nodeWithClusters{CdnNode: n, ClusterIDs: ids}
+		}
+
+		c.JSON(http.StatusOK, gin.H{"data": result, "total": len(nodes)})
 	}
 }
 
@@ -135,7 +164,7 @@ func CreateNode(db *gorm.DB) gin.HandlerFunc {
 			Weight         int    `json:"weight"`
 			Region         string `json:"region"`
 			Status         string `json:"status"`
-			ClusterID      uint   `json:"cluster_id"`
+			ClusterIDs     []uint `json:"cluster_ids"`
 			IP             string `json:"ip"`
 			ISP            string `json:"isp"`
 			Provider       string `json:"provider"`
@@ -187,7 +216,6 @@ func CreateNode(db *gorm.DB) gin.HandlerFunc {
 			Weight:         weight,
 			Region:         body.Region,
 			Status:         status,
-			ClusterID:      body.ClusterID,
 			IP:             body.IP,
 			ISP:            body.ISP,
 			Provider:       body.Provider,
@@ -200,6 +228,14 @@ func CreateNode(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+
+		// 创建集群关联
+		for _, cid := range body.ClusterIDs {
+			if cid > 0 {
+				db.Create(&models.NodeCluster{NodeID: node.ID, ClusterID: cid})
+			}
+		}
+
 		c.JSON(http.StatusCreated, gin.H{"data": node})
 	}
 }
@@ -225,7 +261,7 @@ func UpdateNode(db *gorm.DB) gin.HandlerFunc {
 			Weight         int     `json:"weight"`
 			Region         *string `json:"region"`
 			Status         string  `json:"status"`
-			ClusterID      *uint   `json:"cluster_id"`
+			ClusterIDs     []uint  `json:"cluster_ids"`
 			IP             *string `json:"ip"`
 			ISP            *string `json:"isp"`
 			Provider       *string `json:"provider"`
@@ -278,9 +314,6 @@ func UpdateNode(db *gorm.DB) gin.HandlerFunc {
 		if body.Region != nil {
 			node.Region = *body.Region
 		}
-		if body.ClusterID != nil {
-			node.ClusterID = *body.ClusterID
-		}
 		if body.IP != nil {
 			node.IP = *body.IP
 		}
@@ -304,6 +337,17 @@ func UpdateNode(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
+
+		// 更新集群关联：清空后重建
+		if body.ClusterIDs != nil {
+			db.Where("node_id = ?", id).Delete(&models.NodeCluster{})
+			for _, cid := range body.ClusterIDs {
+				if cid > 0 {
+					db.Create(&models.NodeCluster{NodeID: node.ID, ClusterID: cid})
+				}
+			}
+		}
+
 		c.JSON(http.StatusOK, gin.H{"data": node})
 	}
 }
@@ -317,6 +361,7 @@ func DeleteNode(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
+		db.Where("node_id = ?", id).Delete(&models.NodeCluster{})
 		if err := db.Delete(&models.CdnNode{}, id).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
@@ -340,6 +385,7 @@ func BatchDeleteNodes(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
+		db.Where("node_id IN ?", body.IDs).Delete(&models.NodeCluster{})
 		if err := db.Delete(&models.CdnNode{}, body.IDs).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return

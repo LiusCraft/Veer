@@ -42,6 +42,7 @@ func main() {
 		&models.Cluster{},
 		&models.RuleCluster{},
 		&models.ClusterMetric{},
+		&models.NodeCluster{},
 	); err != nil {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}

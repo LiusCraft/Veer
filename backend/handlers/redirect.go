@@ -5,6 +5,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -39,12 +40,20 @@ func getRoundRobinCounter(ruleID uint) *int64 {
 	return &zero
 }
 
+type clusterSelectInfo struct {
+	clusterID uint
+	weight    int
+	priority  int
+	strategy  string
+}
+
 type RuleCache struct {
 	mu           sync.RWMutex
 	rules        map[string][]models.RedirectRule
 	nodes        map[uint]models.CdnNode
 	clusterNodes map[uint][]models.CdnNode
 	ruleClusters []models.RuleCluster
+	clusters     map[uint]models.Cluster
 	db           *gorm.DB
 }
 
@@ -94,10 +103,18 @@ func (c *RuleCache) refresh() {
 	c.db.Where("status = ?", "active").Find(&allNodes)
 
 	nodeMap := make(map[uint]models.CdnNode, len(allNodes))
-	clusterNodes := make(map[uint][]models.CdnNode)
 	for _, n := range allNodes {
 		nodeMap[n.ID] = n
-		clusterNodes[n.ClusterID] = append(clusterNodes[n.ClusterID], n)
+	}
+
+	// 通过 NodeCluster 关联表构建集群→节点映射
+	clusterNodes := make(map[uint][]models.CdnNode)
+	var nodeClusters []models.NodeCluster
+	c.db.Find(&nodeClusters)
+	for _, nc := range nodeClusters {
+		if n, ok := nodeMap[nc.NodeID]; ok {
+			clusterNodes[nc.ClusterID] = append(clusterNodes[nc.ClusterID], n)
+		}
 	}
 
 	ruleMap := make(map[string][]models.RedirectRule)
@@ -107,11 +124,25 @@ func (c *RuleCache) refresh() {
 		}
 	}
 
+	var clusterList []models.Cluster
+	clusterIDsSlice := make([]uint, 0, len(clusterIDs))
+	for id := range clusterIDs {
+		clusterIDsSlice = append(clusterIDsSlice, id)
+	}
+	if len(clusterIDsSlice) > 0 {
+		c.db.Where("id IN ?", clusterIDsSlice).Find(&clusterList)
+	}
+	clusterMap := make(map[uint]models.Cluster, len(clusterList))
+	for _, cl := range clusterList {
+		clusterMap[cl.ID] = cl
+	}
+
 	c.mu.Lock()
 	c.rules = ruleMap
 	c.nodes = nodeMap
 	c.clusterNodes = clusterNodes
 	c.ruleClusters = ruleClusters
+	c.clusters = clusterMap
 	c.mu.Unlock()
 
 	log.Printf("[scheduler] rule cache refreshed: %d rules, %d nodes, %d clusters", len(rules), len(allNodes), len(clusterIDs))
@@ -148,6 +179,141 @@ func (c *RuleCache) getNodesForRule(ruleID uint) []models.CdnNode {
 		}
 	}
 	return result
+}
+
+func (c *RuleCache) selectNodeForRule(ruleID uint, ruleStrategy, region, isp string) (models.CdnNode, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	var infos []clusterSelectInfo
+	for _, rc := range c.ruleClusters {
+		if rc.RuleID == ruleID {
+			cl, ok := c.clusters[rc.ClusterID]
+			if !ok {
+				continue
+			}
+			if !clusterMatches(cl, region, isp) {
+				continue
+			}
+			strategy := ruleStrategy
+			if cl.Strategy != "" {
+				strategy = cl.Strategy
+			}
+			infos = append(infos, clusterSelectInfo{
+				clusterID: rc.ClusterID,
+				weight:    rc.Weight,
+				priority:  rc.Priority,
+				strategy:  strategy,
+			})
+		}
+	}
+
+	if len(infos) == 0 {
+		return models.CdnNode{}, false
+	}
+
+	sort.Slice(infos, func(i, j int) bool {
+		if infos[i].priority != infos[j].priority {
+			return infos[i].priority < infos[j].priority
+		}
+		return infos[i].clusterID < infos[j].clusterID
+	})
+
+	currentPri := infos[0].priority
+	start := 0
+	for i := 0; i <= len(infos); i++ {
+		if i == len(infos) || infos[i].priority != currentPri {
+			level := infos[start:i]
+			var candidates []clusterSelectInfo
+			for _, info := range level {
+				nodes, ok := c.clusterNodes[info.clusterID]
+				if !ok {
+					continue
+				}
+				filtered := filterNodesByRegionISP(nodes, region, isp)
+				if len(filtered) > 0 {
+					candidates = append(candidates, info)
+				}
+			}
+			if len(candidates) > 0 {
+				selected := selectClusterByWeight(candidates)
+				nodes := c.clusterNodes[selected.clusterID]
+				filtered := filterNodesByRegionISP(nodes, region, isp)
+				return selectNode(filtered, selected.strategy, ruleID), true
+			}
+			if i < len(infos) {
+				currentPri = infos[i].priority
+				start = i
+			}
+		}
+	}
+
+	return models.CdnNode{}, false
+}
+
+func clusterMatches(cl models.Cluster, region, isp string) bool {
+	if region == "" && isp == "" {
+		return true
+	}
+	regionMatch := region == ""
+	for _, r := range cl.Region {
+		if r == region || r == "其他" {
+			regionMatch = true
+			break
+		}
+	}
+	ispMatch := isp == ""
+	for _, i := range cl.ISP {
+		if i == isp || i == "其他" {
+			ispMatch = true
+			break
+		}
+	}
+	return regionMatch && ispMatch
+}
+
+func filterNodesByRegionISP(nodes []models.CdnNode, region, isp string) []models.CdnNode {
+	if region == "" && isp == "" {
+		return nodes
+	}
+	var result []models.CdnNode
+	for _, n := range nodes {
+		if region != "" && n.Region != region && n.Region != "其他" {
+			continue
+		}
+		if isp != "" && n.ISP != isp && n.ISP != "其他" {
+			continue
+		}
+		result = append(result, n)
+	}
+	return result
+}
+
+func selectClusterByWeight(infos []clusterSelectInfo) clusterSelectInfo {
+	if len(infos) == 1 {
+		return infos[0]
+	}
+	totalWeight := 0
+	for _, info := range infos {
+		w := info.weight
+		if w <= 0 {
+			w = 1
+		}
+		totalWeight += w
+	}
+	r := rand.Intn(totalWeight)
+	cumulative := 0
+	for _, info := range infos {
+		w := info.weight
+		if w <= 0 {
+			w = 1
+		}
+		cumulative += w
+		if r < cumulative {
+			return info
+		}
+	}
+	return infos[0]
 }
 
 func matchPath(sourcePath, requestPath, matchType string) bool {
@@ -199,18 +365,22 @@ func SchedulerHandler(cache *RuleCache) gin.HandlerFunc {
 			}
 
 			if rule.RuleType == "domain_routing" {
-				nodes := cache.getNodesForRule(rule.ID)
-				if len(nodes) == 0 {
+				reqRegion := c.GetHeader("X-Region")
+				reqISP := c.GetHeader("X-ISP")
+				selectedNode, ok := cache.selectNodeForRule(rule.ID, rule.Strategy, reqRegion, reqISP)
+				if !ok {
 					var nodeIDs []uint
 					if err := json.Unmarshal([]byte(rule.NodeIDs), &nodeIDs); err == nil && len(nodeIDs) > 0 {
-						nodes = cache.GetNodes(nodeIDs)
+						nodes := cache.GetNodes(nodeIDs)
+						if len(nodes) > 0 {
+							selectedNode = selectNode(nodes, rule.Strategy, rule.ID)
+							ok = true
+						}
 					}
 				}
-				if len(nodes) == 0 {
+				if !ok {
 					continue
 				}
-
-				selectedNode := selectNode(nodes, rule.Strategy, rule.ID)
 
 				remainingPath := strings.TrimLeft(requestPath, "/")
 				targetURL := strings.TrimRight(selectedNode.URL, "/")

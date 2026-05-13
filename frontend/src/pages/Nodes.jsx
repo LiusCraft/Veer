@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   Box,
   Typography,
@@ -44,10 +44,11 @@ import { nodesApi, clustersApi } from '../api/index.js'
 import StatusChip from '../components/StatusChip.jsx'
 import useTableSearch from '../hooks/useTableSearch.js'
 import { exportToCSV } from '../utils/csv.js'
+import { formatRelativeTime } from '../utils/time.js'
 
 const EMPTY_FORM = {
   name: '', url: '', weight: 1, region: '', status: 'active',
-  cluster_id: 0, ip: '', isp: '', provider: '', node_type: 'edge',
+  cluster_ids: [], ip: '', isp: '', provider: '', node_type: 'edge',
   bandwidth_mbps: 1000, max_connections: 10000,
 }
 
@@ -76,10 +77,26 @@ function Nodes() {
     'asc'
   )
 
-  useEffect(() => {
-    loadNodes()
-    loadClusters()
-  }, [])
+  const [filterCluster, setFilterCluster] = useState('')
+  const [filterNodeType, setFilterNodeType] = useState('')
+  const [filterProvider, setFilterProvider] = useState('')
+
+  const loadNodes = useCallback(async () => {
+    setLoading(true)
+    setError('')
+    try {
+      const params = {}
+      if (filterCluster) params.cluster_id = filterCluster
+      if (filterNodeType) params.node_type = filterNodeType
+      if (filterProvider) params.provider = filterProvider
+      const res = await nodesApi.list(params)
+      setNodes(res.data || [])
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }, [filterCluster, filterNodeType, filterProvider])
 
   const loadClusters = async () => {
     try {
@@ -88,18 +105,13 @@ function Nodes() {
     } catch {}
   }
 
-  const loadNodes = async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const res = await nodesApi.list()
-      setNodes(res.data || [])
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setLoading(false)
-    }
-  }
+  useEffect(() => {
+    loadClusters()
+  }, [])
+
+  useEffect(() => {
+    loadNodes()
+  }, [loadNodes])
 
   const handleOpenDialog = (node = null) => {
     if (node) {
@@ -107,7 +119,7 @@ function Nodes() {
       setForm({
         name: node.name, url: node.url, weight: node.weight,
         region: node.region, status: node.status,
-        cluster_id: node.cluster_id || 0, ip: node.ip || '', isp: node.isp || '',
+        cluster_ids: node.cluster_ids || [], ip: node.ip || '', isp: node.isp || '',
         provider: node.provider || '', node_type: node.node_type || 'edge',
         bandwidth_mbps: node.bandwidth_mbps || 1000, max_connections: node.max_connections || 10000,
       })
@@ -237,7 +249,7 @@ function Nodes() {
       { key: 'isp', label: '运营商' },
       { key: 'provider', label: '云厂商' },
       { key: 'node_type', label: '节点类型' },
-      { key: 'cluster_id', label: '集群ID' },
+      { key: 'cluster_ids', label: '集群ID' },
       { key: 'weight', label: '权重' },
       { key: 'bandwidth_mbps', label: '带宽' },
       { key: 'cpu_usage', label: 'CPU(%)' },
@@ -259,10 +271,6 @@ function Nodes() {
       </TableSortLabel>
     </TableCell>
   )
-
-  const [filterCluster, setFilterCluster] = useState('')
-  const [filterNodeType, setFilterNodeType] = useState('')
-  const [filterProvider, setFilterProvider] = useState('')
 
   return (
     <Box>
@@ -390,7 +398,7 @@ function Nodes() {
 
       <Card>
         <TableContainer>
-          <Table>
+          <Table sx={{ '& .MuiTableCell-root': { whiteSpace: 'nowrap' } }}>
             <TableHead>
               <TableRow>
                 <TableCell padding="checkbox">
@@ -402,10 +410,10 @@ function Nodes() {
                 </TableCell>
                 {sortCell('name', '节点名称')}
                 <TableCell>所属集群</TableCell>
-                <TableCell>IP 地址</TableCell>
-                <TableCell>URL 地址</TableCell>
                 {sortCell('region', '区域')}
+                <TableCell>IP 地址</TableCell>
                 <TableCell align="center">CPU</TableCell>
+                {sortCell('last_heartbeat', '最后心跳', 'center')}
                 {sortCell('weight', '权重', 'center')}
                 {sortCell('node_type', '类型', 'center')}
                 {sortCell('status', '状态', 'center')}
@@ -416,13 +424,13 @@ function Nodes() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={13} align="center" sx={{ py: 4 }}>
+                  <TableCell colSpan={14} align="center" sx={{ py: 4 }}>
                     <CircularProgress size={32} />
                   </TableCell>
                 </TableRow>
-              ) : filteredData.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={13} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                ) : filteredData.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={14} align="center" sx={{ py: 4, color: 'text.secondary' }}>
                     {search ? '未找到匹配的节点' : '暂无节点，点击「新增节点」添加'}
                   </TableCell>
                 </TableRow>
@@ -444,25 +452,25 @@ function Nodes() {
                       </TableCell>
                       <TableCell sx={{ fontWeight: 500 }}>{node.name}</TableCell>
                       <TableCell>
-                        {node.cluster_id > 0 ? (
-                          <Chip label={clusters.find(c => c.id === node.cluster_id)?.name || `#${node.cluster_id}`}
-                            size="small" color="primary" variant="outlined" />
+                        {(node.cluster_ids || []).length > 0 ? (
+                          <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                            {(node.cluster_ids || []).map(cid => (
+                              <Chip key={cid}
+                                label={clusters.find(c => c.id === cid)?.name || `#${cid}`}
+                                size="small" color="primary" variant="outlined" />
+                            ))}
+                          </Stack>
                         ) : (
                           <Typography variant="body2" color="text.disabled">-</Typography>
                         )}
                       </TableCell>
                       <TableCell>
+                        {node.region ? <Chip label={node.region} size="small" variant="outlined" /> : '-'}
+                      </TableCell>
+                      <TableCell>
                         <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8rem' }}>
                           {node.ip || '-'}
                         </Typography>
-                      </TableCell>
-                      <TableCell>
-                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.8rem', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {node.url}
-                        </Typography>
-                      </TableCell>
-                      <TableCell>
-                        {node.region ? <Chip label={node.region} size="small" variant="outlined" /> : '-'}
                       </TableCell>
                       <TableCell align="center">
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -475,6 +483,11 @@ function Nodes() {
                             }} />
                           <Typography variant="caption">{node.cpu_usage?.toFixed(0) || 0}%</Typography>
                         </Box>
+                      </TableCell>
+                      <TableCell align="center">
+                        <Typography variant="caption" color={node.last_heartbeat ? 'text.secondary' : 'text.disabled'}>
+                          {node.last_heartbeat ? formatRelativeTime(node.last_heartbeat) : '-'}
+                        </Typography>
                       </TableCell>
                       <TableCell align="center">
                         <Chip label={node.weight} size="small" color="info" variant="outlined" />
@@ -560,9 +573,12 @@ function Nodes() {
               fullWidth
               placeholder="https://cdn.example.com"
             />
-            <TextField label="所属集群" select value={form.cluster_id}
-              onChange={handleFormChange('cluster_id')} fullWidth>
-              <MenuItem value={0}>未归属</MenuItem>
+            <TextField label="所属集群" select value={form.cluster_ids}
+              onChange={handleFormChange('cluster_ids')} fullWidth
+              SelectProps={{ multiple: true, renderValue: (s) => {
+                const names = (s || []).map(cid => clusters.find(c => c.id === cid)?.name || `#${cid}`)
+                return names.join(', ')
+              }}}>
               {clusters.map(cl => (
                 <MenuItem key={cl.id} value={cl.id}>{cl.name}</MenuItem>
               ))}
@@ -656,8 +672,10 @@ function Nodes() {
               <Box>
                 <Typography variant="caption" color="text.secondary">所属集群</Typography>
                 <Typography variant="body2">
-                  {detailNode.cluster_id > 0
-                    ? clusters.find(c => c.id === detailNode.cluster_id)?.name || `#${detailNode.cluster_id}`
+                  {(detailNode.cluster_ids || []).length > 0
+                    ? (detailNode.cluster_ids || []).map(cid =>
+                        clusters.find(c => c.id === cid)?.name || `#${cid}`
+                      ).join(', ')
                     : '未归属'}
                 </Typography>
               </Box>
@@ -682,7 +700,7 @@ function Nodes() {
               <Box>
                 <Typography variant="caption" color="text.secondary">最后心跳</Typography>
                 <Typography variant="body2">
-                  {detailNode.last_heartbeat ? new Date(detailNode.last_heartbeat).toLocaleString() : '从未上报'}
+                  {detailNode.last_heartbeat ? formatRelativeTime(detailNode.last_heartbeat) : '从未上报'}
                 </Typography>
               </Box>
               <Box>

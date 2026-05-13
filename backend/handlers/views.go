@@ -56,7 +56,10 @@ func GetTopology(db *gorm.DB) gin.HandlerFunc {
 		result := make([]ClusterTopology, 0, len(clusters))
 		for _, cl := range clusters {
 			var nodes []models.CdnNode
-			db.Where("cluster_id = ?", cl.ID).Order("name asc").Find(&nodes)
+			db.Joins("JOIN node_clusters ON node_clusters.node_id = cdn_nodes.id").
+				Where("node_clusters.cluster_id = ?", cl.ID).
+				Order("cdn_nodes.name asc").
+				Find(&nodes)
 
 			var stats struct {
 				Online         int     `json:"online"`
@@ -66,8 +69,15 @@ func GetTopology(db *gorm.DB) gin.HandlerFunc {
 				AvgLatency     float64 `json:"avg_latency"`
 				TotalBandwidth int     `json:"total_bandwidth_mbps"`
 			}
-			db.Model(&models.CdnNode{}).Where("cluster_id = ?", cl.ID).Select("COUNT(*) as total").Scan(&stats)
-			db.Model(&models.CdnNode{}).Where("cluster_id = ? AND status = 'active'", cl.ID).Select("COUNT(*) as online, COALESCE(AVG(cpu_usage),0) as avg_cpu, COALESCE(AVG(mem_usage),0) as avg_mem, COALESCE(AVG(latency),0) as avg_latency, COALESCE(SUM(bandwidth_mbps),0) as total_bandwidth").Scan(&stats)
+			db.Table("cdn_nodes").
+				Joins("JOIN node_clusters ON node_clusters.node_id = cdn_nodes.id").
+				Where("node_clusters.cluster_id = ?", cl.ID).
+				Select("COUNT(*) as total").Scan(&stats)
+			db.Table("cdn_nodes").
+				Joins("JOIN node_clusters ON node_clusters.node_id = cdn_nodes.id").
+				Where("node_clusters.cluster_id = ? AND cdn_nodes.status = 'active'", cl.ID).
+				Select("COUNT(*) as online, COALESCE(AVG(cdn_nodes.cpu_usage),0) as avg_cpu, COALESCE(AVG(cdn_nodes.mem_usage),0) as avg_mem, COALESCE(AVG(cdn_nodes.latency),0) as avg_latency, COALESCE(SUM(cdn_nodes.bandwidth_mbps),0) as total_bandwidth").
+				Scan(&stats)
 
 			nodeBriefs := make([]NodeBrief, 0, len(nodes))
 			for _, n := range nodes {
@@ -99,18 +109,18 @@ func GetHealthMatrix(db *gorm.DB) gin.HandlerFunc {
 		db.Order("name asc").Find(&clusters)
 
 		type ClusterHealth struct {
-			ClusterID          uint    `json:"cluster_id"`
-			ClusterName        string  `json:"cluster_name"`
-			Region             string  `json:"region"`
-			OnlineNodes        int     `json:"online_nodes"`
-			TotalNodes         int     `json:"total_nodes"`
-			OnlineRate         float64 `json:"online_rate"`
-			AvgCPU             float64 `json:"avg_cpu"`
-			AvgMem             float64 `json:"avg_mem"`
-			AvgDisk            float64 `json:"avg_disk"`
-			AvgLatency         float64 `json:"avg_latency"`
-			TotalBandwidthMbps int     `json:"total_bandwidth_mbps"`
-			HealthStatus       string  `json:"health_status"`
+			ClusterID          uint     `json:"cluster_id"`
+			ClusterName        string   `json:"cluster_name"`
+			Region             []string `json:"region"`
+			OnlineNodes        int      `json:"online_nodes"`
+			TotalNodes         int      `json:"total_nodes"`
+			OnlineRate         float64  `json:"online_rate"`
+			AvgCPU             float64  `json:"avg_cpu"`
+			AvgMem             float64  `json:"avg_mem"`
+			AvgDisk            float64  `json:"avg_disk"`
+			AvgLatency         float64  `json:"avg_latency"`
+			TotalBandwidthMbps int      `json:"total_bandwidth_mbps"`
+			HealthStatus       string   `json:"health_status"`
 		}
 
 		result := make([]ClusterHealth, 0, len(clusters))
@@ -124,8 +134,15 @@ func GetHealthMatrix(db *gorm.DB) gin.HandlerFunc {
 				AvgLatency     float64 `json:"avg_latency"`
 				TotalBandwidth int     `json:"total_bandwidth_mbps"`
 			}
-			db.Model(&models.CdnNode{}).Where("cluster_id = ?", cl.ID).Select("COUNT(*) as total").Scan(&stats)
-			db.Model(&models.CdnNode{}).Where("cluster_id = ? AND status = 'active'", cl.ID).Select("COUNT(*) as online, COALESCE(AVG(cpu_usage),0) as avg_cpu, COALESCE(AVG(mem_usage),0) as avg_mem, COALESCE(AVG(disk_usage),0) as avg_disk, COALESCE(AVG(latency),0) as avg_latency, COALESCE(SUM(bandwidth_mbps),0) as total_bandwidth").Scan(&stats)
+			db.Table("cdn_nodes").
+				Joins("JOIN node_clusters ON node_clusters.node_id = cdn_nodes.id").
+				Where("node_clusters.cluster_id = ?", cl.ID).
+				Select("COUNT(*) as total").Scan(&stats)
+			db.Table("cdn_nodes").
+				Joins("JOIN node_clusters ON node_clusters.node_id = cdn_nodes.id").
+				Where("node_clusters.cluster_id = ? AND cdn_nodes.status = 'active'", cl.ID).
+				Select("COUNT(*) as online, COALESCE(AVG(cdn_nodes.cpu_usage),0) as avg_cpu, COALESCE(AVG(cdn_nodes.mem_usage),0) as avg_mem, COALESCE(AVG(cdn_nodes.disk_usage),0) as avg_disk, COALESCE(AVG(cdn_nodes.latency),0) as avg_latency, COALESCE(SUM(cdn_nodes.bandwidth_mbps),0) as total_bandwidth").
+				Scan(&stats)
 
 			onlineRate := float64(0)
 			if stats.Total > 0 {

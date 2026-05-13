@@ -17,11 +17,11 @@ func ListClusters(db *gorm.DB) gin.HandlerFunc {
 
 		region := c.Query("region")
 		if region != "" {
-			query = query.Where("region = ?", region)
+			query = query.Where("region LIKE ?", `%`+region+`%`)
 		}
 		isp := c.Query("isp")
 		if isp != "" {
-			query = query.Where("isp = ?", isp)
+			query = query.Where("isp LIKE ?", `%`+isp+`%`)
 		}
 		status := c.Query("status")
 		if status != "" {
@@ -40,9 +40,10 @@ func ListClusters(db *gorm.DB) gin.HandlerFunc {
 			Active    int
 		}
 		var counts []NodeCount
-		db.Model(&models.CdnNode{}).
-			Select("cluster_id, COUNT(*) as count, SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END) as active").
-			Group("cluster_id").Scan(&counts)
+		db.Table("node_clusters").
+			Select("node_clusters.cluster_id, COUNT(*) as count, SUM(CASE WHEN cdn_nodes.status = 'active' THEN 1 ELSE 0 END) as active").
+			Joins("LEFT JOIN cdn_nodes ON cdn_nodes.id = node_clusters.node_id").
+			Group("node_clusters.cluster_id").Scan(&counts)
 		countMap := make(map[uint]NodeCount)
 		for _, c := range counts {
 			countMap[c.ClusterID] = c
@@ -73,13 +74,13 @@ func ListClusters(db *gorm.DB) gin.HandlerFunc {
 func CreateCluster(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
-			Name        string `json:"name"`
-			Description string `json:"description"`
-			Strategy    string `json:"strategy"`
-			Region      string `json:"region"`
-			ISP         string `json:"isp"`
-			Provider    string `json:"provider"`
-			Status      string `json:"status"`
+			Name        string   `json:"name"`
+			Description string   `json:"description"`
+			Strategy    string   `json:"strategy"`
+			Region      []string `json:"region"`
+			ISP         []string `json:"isp"`
+			Provider    string   `json:"provider"`
+			Status      string   `json:"status"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -91,11 +92,11 @@ func CreateCluster(db *gorm.DB) gin.HandlerFunc {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "name 必须为 1-64 个字符"})
 			return
 		}
-		if body.Region == "" {
+		if len(body.Region) == 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "region 不能为空"})
 			return
 		}
-		if body.ISP == "" {
+		if len(body.ISP) == 0 {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "isp 不能为空"})
 			return
 		}
@@ -166,13 +167,13 @@ func UpdateCluster(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		var body struct {
-			Name        *string `json:"name"`
-			Description *string `json:"description"`
-			Strategy    *string `json:"strategy"`
-			Region      *string `json:"region"`
-			ISP         *string `json:"isp"`
-			Provider    *string `json:"provider"`
-			Status      *string `json:"status"`
+			Name        *string  `json:"name"`
+			Description *string  `json:"description"`
+			Strategy    *string  `json:"strategy"`
+			Region      []string `json:"region"`
+			ISP         []string `json:"isp"`
+			Provider    *string  `json:"provider"`
+			Status      *string  `json:"status"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -200,10 +201,10 @@ func UpdateCluster(db *gorm.DB) gin.HandlerFunc {
 			cluster.Strategy = *body.Strategy
 		}
 		if body.Region != nil {
-			cluster.Region = *body.Region
+			cluster.Region = body.Region
 		}
 		if body.ISP != nil {
-			cluster.ISP = *body.ISP
+			cluster.ISP = body.ISP
 		}
 		if body.Provider != nil {
 			cluster.Provider = *body.Provider
@@ -235,7 +236,7 @@ func DeleteCluster(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		db.Model(&models.CdnNode{}).Where("cluster_id = ?", id).Update("cluster_id", 0)
+		db.Where("cluster_id = ?", id).Delete(&models.NodeCluster{})
 
 		if err := db.Delete(&models.Cluster{}, id).Error; err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -261,8 +262,15 @@ func SetClusterNodes(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		db.Model(&models.CdnNode{}).Where("cluster_id = ? AND id NOT IN ?", id, body.NodeIDs).Update("cluster_id", 0)
-		db.Model(&models.CdnNode{}).Where("id IN ?", body.NodeIDs).Update("cluster_id", id)
+		cid := uint(id)
+		// 清除该集群的旧关联
+		db.Where("cluster_id = ?", cid).Delete(&models.NodeCluster{})
+		// 创建新关联
+		for _, nid := range body.NodeIDs {
+			if nid > 0 {
+				db.Create(&models.NodeCluster{NodeID: nid, ClusterID: cid})
+			}
+		}
 
 		var nodes []models.CdnNode
 		db.Where("id IN ?", body.NodeIDs).Find(&nodes)
@@ -278,7 +286,9 @@ func ListClusterNodes(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		query := db.Model(&models.CdnNode{}).Where("cluster_id = ?", id)
+		query := db.Model(&models.CdnNode{}).
+			Joins("JOIN node_clusters ON node_clusters.node_id = cdn_nodes.id").
+			Where("node_clusters.cluster_id = ?", id)
 		status := c.Query("status")
 		if status != "" {
 			query = query.Where("status = ?", status)
@@ -334,8 +344,15 @@ func GetClusterStats(db *gorm.DB) gin.HandlerFunc {
 			AvgLatency     float64 `json:"avg_latency"`
 			TotalBandwidth int     `json:"total_bandwidth"`
 		}
-		db.Model(&models.CdnNode{}).Where("cluster_id = ?", id).Select("COUNT(*) as total").Scan(&stats)
-		db.Model(&models.CdnNode{}).Where("cluster_id = ? AND status = 'active'", id).Select("COUNT(*) as online, COALESCE(AVG(cpu_usage),0) as avg_cpu, COALESCE(AVG(mem_usage),0) as avg_mem, COALESCE(AVG(latency),0) as avg_latency, COALESCE(SUM(bandwidth_mbps),0) as total_bandwidth").Scan(&stats)
+		db.Table("cdn_nodes").
+			Joins("JOIN node_clusters ON node_clusters.node_id = cdn_nodes.id").
+			Where("node_clusters.cluster_id = ?", id).
+			Select("COUNT(*) as total").Scan(&stats)
+		db.Table("cdn_nodes").
+			Joins("JOIN node_clusters ON node_clusters.node_id = cdn_nodes.id").
+			Where("node_clusters.cluster_id = ? AND cdn_nodes.status = 'active'", id).
+			Select("COUNT(*) as online, COALESCE(AVG(cdn_nodes.cpu_usage),0) as avg_cpu, COALESCE(AVG(cdn_nodes.mem_usage),0) as avg_mem, COALESCE(AVG(cdn_nodes.latency),0) as avg_latency, COALESCE(SUM(cdn_nodes.bandwidth_mbps),0) as total_bandwidth").
+			Scan(&stats)
 
 		c.JSON(http.StatusOK, gin.H{"data": stats})
 	}

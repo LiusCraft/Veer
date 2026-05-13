@@ -36,7 +36,10 @@ api.interceptors.response.use(
 // ===== CDN Nodes API =====
 export const nodesApi = {
   /** Get all CDN nodes */
-  list: () => api.get('/nodes'),
+  list: (params = {}) => api.get('/nodes', { params }),
+
+  /** Get single CDN node */
+  get: (id) => api.get(`/nodes/${id}`),
 
   /** Create a new CDN node */
   create: (data) => api.post('/nodes', data),

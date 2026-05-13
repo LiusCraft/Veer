@@ -128,6 +128,8 @@ func (m *HealthCheckManager) checkAllNodes() {
 		}(nodes[i])
 	}
 	wg.Wait()
+
+	m.updateClusterStatus()
 }
 
 // checkNode 检测单个节点的健康状态
@@ -217,4 +219,38 @@ func (m *HealthCheckManager) checkNode(node models.CdnNode) {
 		log.Printf("Health check: node %q (%s) recovered to active (latency: %dms)", node.Name, node.URL, latency)
 	}
 	m.db.Model(&node).Updates(updates)
+}
+
+func (m *HealthCheckManager) updateClusterStatus() {
+	var clusters []models.Cluster
+	if err := m.db.Find(&clusters).Error; err != nil {
+		log.Printf("Health check: failed to fetch clusters for status update: %v", err)
+		return
+	}
+	for _, cl := range clusters {
+		var stats struct {
+			Total  int
+			Active int
+		}
+		m.db.Model(&models.CdnNode{}).Where("cluster_id = ?", cl.ID).Select("COUNT(*) as total").Scan(&stats)
+		m.db.Model(&models.CdnNode{}).Where("cluster_id = ? AND status = 'active'", cl.ID).Select("COUNT(*) as active").Scan(&stats)
+
+		if stats.Total == 0 {
+			continue
+		}
+		newStatus := cl.Status
+		switch {
+		case stats.Active == 0:
+			newStatus = "inactive"
+		case stats.Active < stats.Total:
+			newStatus = "degraded"
+		default:
+			newStatus = "active"
+		}
+
+		if newStatus != cl.Status {
+			m.db.Model(&cl).Update("status", newStatus)
+			log.Printf("Health check: cluster %q status changed: %s → %s", cl.Name, cl.Status, newStatus)
+		}
+	}
 }

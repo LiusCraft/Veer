@@ -84,6 +84,7 @@ type EdgeConfig struct {
 	Manager       EdgeManagerConfig `mapstructure:"manager"`                                    // Manager 连接配置
 	OriginBaseURL string            `mapstructure:"origin_base_url" default:"http://origin:80"` // 回源地址（未从 Manager 拉取时用）
 	Cache         EdgeCacheConfig   `mapstructure:"cache"`
+	NodeID        uint              // 注册后由 Manager 分配，运行时值不来自配置文件
 }
 
 // EdgeManagerConfig 边缘节点连接 Manager 的配置

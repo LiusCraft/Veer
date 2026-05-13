@@ -60,23 +60,27 @@ func NodeHeartbeatHandler(db *gorm.DB, cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		if node.ClusterID > 0 && body.RequestCount1m > 0 {
-			var metric models.ClusterMetric
-			result := db.Where("cluster_id = ? AND recorded_at > ?", node.ClusterID, now.Add(-5*time.Minute)).First(&metric)
-			if result.Error != nil {
-				metric = models.ClusterMetric{
-					ClusterID:      node.ClusterID,
-					RequestCount:   body.RequestCount1m,
-					BandwidthBytes: body.BandwidthBytes1m,
-					PeriodMinutes:  5,
-					RecordedAt:     now,
+		if body.RequestCount1m > 0 {
+			var clusterIDs []uint
+			db.Model(&models.NodeCluster{}).Where("node_id = ?", node.ID).Pluck("cluster_id", &clusterIDs)
+			for _, cid := range clusterIDs {
+				var metric models.ClusterMetric
+				result := db.Where("cluster_id = ? AND recorded_at > ?", cid, now.Add(-5*time.Minute)).First(&metric)
+				if result.Error != nil {
+					metric = models.ClusterMetric{
+						ClusterID:      cid,
+						RequestCount:   body.RequestCount1m,
+						BandwidthBytes: body.BandwidthBytes1m,
+						PeriodMinutes:  5,
+						RecordedAt:     now,
+					}
+					db.Create(&metric)
+				} else {
+					db.Model(&metric).Updates(map[string]interface{}{
+						"request_count":   gorm.Expr("request_count + ?", body.RequestCount1m),
+						"bandwidth_bytes": gorm.Expr("bandwidth_bytes + ?", body.BandwidthBytes1m),
+					})
 				}
-				db.Create(&metric)
-			} else {
-				db.Model(&metric).Updates(map[string]interface{}{
-					"request_count":   gorm.Expr("request_count + ?", body.RequestCount1m),
-					"bandwidth_bytes": gorm.Expr("bandwidth_bytes + ?", body.BandwidthBytes1m),
-				})
 			}
 		}
 

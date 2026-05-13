@@ -3,9 +3,7 @@ package models
 import "time"
 
 type CdnNode struct {
-	ID        uint `json:"id" gorm:"primarykey"`
-	ClusterID uint `json:"cluster_id" gorm:"index;not null;default:0"`
-
+	ID   uint   `json:"id" gorm:"primarykey"`
 	Name string `json:"name" binding:"required"`
 	URL  string `json:"url" binding:"required"`
 

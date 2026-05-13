@@ -22,8 +22,8 @@ const EMPTY_FORM = {
   name: '',
   description: '',
   strategy: 'round-robin',
-  region: '',
-  isp: '',
+  region: [],
+  isp: [],
   provider: '',
   status: 'active',
 }
@@ -73,6 +73,8 @@ function Clusters() {
     }
   }
 
+  const toArray = (v) => Array.isArray(v) ? v : (v ? [v] : [])
+
   const handleOpenDialog = (cluster = null) => {
     if (cluster) {
       setEditingCluster(cluster)
@@ -80,8 +82,8 @@ function Clusters() {
         name: cluster.name,
         description: cluster.description || '',
         strategy: cluster.strategy || 'round-robin',
-        region: cluster.region,
-        isp: cluster.isp,
+        region: toArray(cluster.region),
+        isp: toArray(cluster.isp),
         provider: cluster.provider || '',
         status: cluster.status,
       })
@@ -104,8 +106,8 @@ function Clusters() {
 
   const handleSave = async () => {
     if (!form.name.trim()) { setError('集群名称不能为空'); return }
-    if (!form.region) { setError('请选择区域'); return }
-    if (!form.isp) { setError('请选择运营商'); return }
+    if (!form.region.length) { setError('请选择至少一个区域'); return }
+    if (!form.isp.length) { setError('请选择至少一个运营商'); return }
     setSaving(true)
     setError('')
     try {
@@ -269,9 +271,13 @@ function Clusters() {
                         </Box>
                       </TableCell>
                       <TableCell>
-                        <Stack direction="row" spacing={0.5}>
-                          {cluster.region && <Chip label={cluster.region} size="small" variant="outlined" />}
-                          {cluster.isp && <Chip label={cluster.isp} size="small" color="primary" variant="outlined" />}
+                        <Stack direction="row" spacing={0.5} flexWrap="wrap" useFlexGap>
+                          {(Array.isArray(cluster.region) ? cluster.region : [cluster.region]).filter(Boolean).map(r => (
+                            <Chip key={r} label={r} size="small" variant="outlined" />
+                          ))}
+                          {(Array.isArray(cluster.isp) ? cluster.isp : [cluster.isp]).filter(Boolean).map(i => (
+                            <Chip key={i} label={i} size="small" color="primary" variant="outlined" />
+                          ))}
                         </Stack>
                       </TableCell>
                       <TableCell align="center">
@@ -332,11 +338,13 @@ function Clusters() {
               onChange={handleFormChange('name')} required fullWidth
               placeholder="例如：华北-电信-A" />
             <TextField label="区域" select value={form.region}
-              onChange={handleFormChange('region')} required fullWidth>
+              onChange={handleFormChange('region')} required fullWidth
+              SelectProps={{ multiple: true, renderValue: (s) => s.join(', ') }}>
               {REGIONS.map(r => <MenuItem key={r} value={r}>{r}</MenuItem>)}
             </TextField>
             <TextField label="运营商" select value={form.isp}
-              onChange={handleFormChange('isp')} required fullWidth>
+              onChange={handleFormChange('isp')} required fullWidth
+              SelectProps={{ multiple: true, renderValue: (s) => s.join(', ') }}>
               {ISPS.map(i => <MenuItem key={i} value={i}>{i}</MenuItem>)}
             </TextField>
             <TextField label="云厂商" select value={form.provider}
@@ -373,9 +381,13 @@ function Clusters() {
             <Toolbar />
             <Box sx={{ px: 3, py: 2.5, borderBottom: '1px solid', borderColor: 'divider' }}>
               <Typography variant="h6" sx={{ fontWeight: 700 }}>{selectedCluster.name}</Typography>
-              <Stack direction="row" spacing={1} sx={{ mt: 1 }}>
-                <Chip label={selectedCluster.region} size="small" variant="outlined" />
-                <Chip label={selectedCluster.isp} size="small" color="primary" variant="outlined" />
+              <Stack direction="row" spacing={0.5} sx={{ mt: 1, flexWrap: 'wrap', useFlexGap: true }}>
+                {(Array.isArray(selectedCluster.region) ? selectedCluster.region : [selectedCluster.region]).filter(Boolean).map(r => (
+                  <Chip key={r} label={r} size="small" variant="outlined" />
+                ))}
+                {(Array.isArray(selectedCluster.isp) ? selectedCluster.isp : [selectedCluster.isp]).filter(Boolean).map(i => (
+                  <Chip key={i} label={i} size="small" color="primary" variant="outlined" />
+                ))}
                 <Chip label={selectedCluster.strategy} size="small" color="info" variant="outlined" />
                 <StatusChip status={selectedCluster.status} />
               </Stack>

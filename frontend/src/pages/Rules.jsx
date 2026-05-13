@@ -21,7 +21,7 @@ import ArrowForwardIcon from '@mui/icons-material/ArrowForward'
 import PublicIcon from '@mui/icons-material/Public'
 import MemoryIcon from '@mui/icons-material/Memory'
 import BlockIcon from '@mui/icons-material/Block'
-import { rulesApi, nodesApi, clustersApi } from '../api/index.js'
+import { rulesApi, clustersApi } from '../api/index.js'
 import { exportToCSV } from '../utils/csv.js'
 
 const MATCH_TYPE_LABELS = { prefix: '前缀匹配', exact: '精确匹配', regex: '正则匹配' }
@@ -34,8 +34,7 @@ const RULE_TYPE_META = {
 
 const EMPTY_ROUTING_FORM = {
   name: '', domain: '', description: '', strategy: 'round-robin',
-  node_ids: '[]', origin_base_url: '', enabled: true,
-  cache_ttl_seconds: null, cache_control_override: '', bypass_cache: false,
+  origin_base_url: '', enabled: true,
 }
 const EMPTY_REDIRECT_FORM = {
   name: '', domain: '', description: '',
@@ -43,7 +42,7 @@ const EMPTY_REDIRECT_FORM = {
   target_path: '', redirect_code: 302, enabled: true,
 }
 
-function RuleCard({ rule, nodes, onEdit, onToggle, isSelectMode, isSelected, onSelect }) {
+function RuleCard({ rule, clusters, onEdit, onToggle, isSelectMode, isSelected, onSelect }) {
   const isRouting = rule.rule_type === 'domain_routing'
   const meta = RULE_TYPE_META[rule.rule_type] || RULE_TYPE_META.domain_routing
 
@@ -100,7 +99,7 @@ function RuleCard({ rule, nodes, onEdit, onToggle, isSelectMode, isSelected, onS
           </Box>
 
           {isRouting ? (
-            <RoutingRulePreview rule={rule} clusters={clusters} nodes={nodes} />
+            <RoutingRulePreview rule={rule} clusters={clusters} />
           ) : (
             <UrlRedirectRulePreview rule={rule} />
           )}
@@ -222,7 +221,6 @@ function FormSection({ title, optional, children }) {
 
 function Rules() {
   const [rules, setRules] = useState([])
-  const [nodes, setNodes] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -230,7 +228,6 @@ function Rules() {
   const [formType, setFormType] = useState('domain_routing')
   const [routingForm, setRoutingForm] = useState(EMPTY_ROUTING_FORM)
   const [redirectForm, setRedirectForm] = useState(EMPTY_REDIRECT_FORM)
-  const [selectedNodeIds, setSelectedNodeIds] = useState([])
   const [clusters, setClusters] = useState([])
   const [selectedClusterBindings, setSelectedClusterBindings] = useState([])
   const [saving, setSaving] = useState(false)
@@ -244,14 +241,12 @@ function Rules() {
     setLoading(true)
     setError('')
     try {
-      const [rulesRes, nodesRes, clustersRes] = await Promise.all([
+      const [rulesRes, clustersRes] = await Promise.all([
         rulesApi.list(),
-        nodesApi.list(),
         clustersApi.list(),
       ])
       const sorted = (rulesRes.data || []).sort((a, b) => (a.priority || 0) - (b.priority || 0))
       setRules(sorted)
-      setNodes(nodesRes.data || [])
       setClusters(clustersRes.data || [])
     } catch (err) {
       setError(err.message)
@@ -262,8 +257,6 @@ function Rules() {
 
   useEffect(() => { loadData() }, [loadData])
   useEffect(() => { setSelected([]); setSelectMode(false) }, [])
-
-  const parseNodeIds = (str) => { try { return JSON.parse(str || '[]') } catch { return [] } }
 
   const isRoutingForm = formType === 'domain_routing'
 
@@ -282,13 +275,11 @@ function Rules() {
       if (rule.rule_type === 'url_redirect') {
         setRedirectForm({ ...EMPTY_REDIRECT_FORM, ...rule, enabled: rule.enabled })
       } else {
-        setSelectedNodeIds(parseNodeIds(rule.node_ids))
         setSelectedClusterBindings(rule.clusters || [])
-        setRoutingForm({ ...EMPTY_ROUTING_FORM, ...rule, enabled: rule.enabled, node_ids: rule.node_ids || '[]' })
+        setRoutingForm({ ...EMPTY_ROUTING_FORM, ...rule, enabled: rule.enabled })
       }
     } else {
       setFormType('domain_routing')
-      setSelectedNodeIds([])
       setSelectedClusterBindings([])
       setRoutingForm(EMPTY_ROUTING_FORM)
       setRedirectForm(EMPTY_REDIRECT_FORM)
@@ -301,23 +292,17 @@ function Rules() {
     setEditingRule(null)
     setRoutingForm(EMPTY_ROUTING_FORM)
     setRedirectForm(EMPTY_REDIRECT_FORM)
-    setSelectedNodeIds([])
     setSelectedClusterBindings([])
   }
 
   const handleRoutingChange = (f) => (e) => setRoutingForm(p => ({ ...p, [f]: e.target.value }))
   const handleRedirectChange = (f) => (e) => setRedirectForm(p => ({ ...p, [f]: e.target.value }))
 
-  const handleNodeSelectChange = (e) => {
-    const v = e.target.value
-    setSelectedNodeIds(typeof v === 'string' ? v.split(',').map(Number) : v)
-  }
-
   const handleSave = async () => {
     const form = isRoutingForm ? routingForm : redirectForm
     if (!form.domain?.trim()) { setError('域名字段不能为空'); return }
-    if (isRoutingForm && selectedClusterBindings.length === 0 && selectedNodeIds.length === 0) {
-      setError('请至少选择一个集群或节点'); return
+    if (isRoutingForm && selectedClusterBindings.length === 0) {
+      setError('请至少选择一个关联集群'); return
     }
 
     setSaving(true)
@@ -329,8 +314,7 @@ function Rules() {
         : {
             ...routingForm,
             domain: routingForm.domain.trim(),
-            node_ids: selectedNodeIds.length > 0 ? JSON.stringify(selectedNodeIds) : '[]',
-            clusters: selectedClusterBindings.length > 0 ? selectedClusterBindings : undefined,
+            clusters: selectedClusterBindings,
           }
 
       if (editingRule) {
@@ -492,7 +476,7 @@ function Rules() {
       ) : (
         <Stack spacing={1}>
           {filteredData.map(rule => (
-            <RuleCard key={rule.id} rule={rule} nodes={nodes}
+            <RuleCard key={rule.id} rule={rule} clusters={clusters}
               onEdit={handleOpenDrawer} onToggle={handleToggle}
               isSelectMode={selectMode} isSelected={selected.includes(rule.id)}
               onSelect={(id) => setSelected(p => p.includes(id) ? p.filter(s => s !== id) : [...p, id])} />
@@ -572,24 +556,6 @@ function Rules() {
                   <MenuItem value="weighted">权重 — 按节点权重比例分发</MenuItem>
                   <MenuItem value="random">随机 — 随机选择一个节点</MenuItem>
                 </TextField>
-                <FormControl fullWidth size="small">
-                  <InputLabel>绑定节点</InputLabel>
-                  <Select multiple value={selectedNodeIds} onChange={handleNodeSelectChange}
-                    input={<OutlinedInput label="绑定节点" />}
-                    renderValue={(sel) => sel.map(id => nodes.find(n => n.id === id)?.name || `#${id}`).join(', ')}>
-                    {nodes.map(node => (
-                      <MenuItem key={node.id} value={node.id}>
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, width: '100%' }}>
-                          <span>{node.name}</span>
-                          <Box sx={{ flexGrow: 1 }} />
-                          <Chip label={node.region || '未知区域'} size="small" variant="outlined" sx={{ height: 18, fontSize: 10 }} />
-                          {node.status === 'inactive' && <Chip label="停用" size="small" color="error" sx={{ height: 18, fontSize: 10 }} />}
-                        </Box>
-                      </MenuItem>
-                    ))}
-                  </Select>
-                  <FormHelperText>按策略将请求均衡分发到所选节点</FormHelperText>
-                </FormControl>
                 <FormControl fullWidth size="small">
                   <InputLabel>关联集群</InputLabel>
                   <Select multiple value={selectedClusterBindings.map(b => b.cluster_id)}

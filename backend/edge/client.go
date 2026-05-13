@@ -43,9 +43,19 @@ type rulesResponse struct {
 	Data []rulesResponseData `json:"data"`
 }
 
+type heartbeatRequest struct {
+	CPUUsage         float64 `json:"cpu_usage"`
+	MemUsage         float64 `json:"mem_usage"`
+	DiskUsage        float64 `json:"disk_usage"`
+	LoadAvg          float64 `json:"load_avg"`
+	RequestCount1m   int64   `json:"request_count_1m"`
+	BandwidthBytes1m int64   `json:"bandwidth_bytes_1m"`
+}
+
 type managerClient struct {
 	baseURL string
 	secret  string
+	nodeID  uint
 	client  *http.Client
 }
 
@@ -57,6 +67,41 @@ func newManagerClient(mgr config.EdgeManagerConfig) *managerClient {
 			Timeout: 10 * time.Second,
 		},
 	}
+}
+
+func (mc *managerClient) sendHeartbeat(m systemMetrics) error {
+	body := heartbeatRequest{
+		CPUUsage:  m.CPUUsage,
+		MemUsage:  m.MemUsage,
+		DiskUsage: m.DiskUsage,
+		LoadAvg:   m.LoadAvg,
+	}
+
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("failed to marshal heartbeat: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/nodes/%d/heartbeat", mc.baseURL, mc.nodeID)
+	req, err := http.NewRequest("POST", url, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to create heartbeat request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Edge-Secret", mc.secret)
+
+	resp, err := mc.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to send heartbeat: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("heartbeat returned status %d: %s", resp.StatusCode, string(bodyBytes))
+	}
+
+	return nil
 }
 
 func (mc *managerClient) register(name, region, publicURL string) (*registerResponseData, error) {
@@ -136,6 +181,8 @@ func RegisterWithManager(cfg *config.EdgeConfig) error {
 	}
 
 	log.Printf("[edge] registered as node ID %d", resp.NodeID)
+	cfg.NodeID = resp.NodeID
+	mc.nodeID = resp.NodeID
 
 	if resp.OriginBaseURL != "" {
 		cfg.OriginBaseURL = resp.OriginBaseURL
@@ -179,4 +226,39 @@ func SyncRules(srv *EdgeServer) error {
 	log.Printf("[edge] synced %d domain->origin mappings from manager", len(rules))
 
 	return nil
+}
+
+func StartHeartbeatLoop(cfg *config.EdgeConfig) {
+	if cfg.Manager.URL == "" || cfg.NodeID == 0 {
+		log.Println("[edge] heartbeat loop skipped (no manager or node ID)")
+		return
+	}
+
+	mc := newManagerClient(cfg.Manager)
+	mc.nodeID = cfg.NodeID
+	collector := newMetricsCollector(cfg.Cache.Disk.Path)
+
+	log.Printf("[edge] heartbeat loop started (interval=30s, node_id=%d)", cfg.NodeID)
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	// send first heartbeat immediately
+	m := collector.collect()
+	if err := mc.sendHeartbeat(m); err != nil {
+		log.Printf("[edge] initial heartbeat failed: %v", err)
+	} else {
+		log.Printf("[edge] heartbeat sent (cpu=%.1f%%, mem=%.1f%%, disk=%.1f%%, load=%.1f)",
+			m.CPUUsage, m.MemUsage, m.DiskUsage, m.LoadAvg)
+	}
+
+	for range ticker.C {
+		m := collector.collect()
+		if err := mc.sendHeartbeat(m); err != nil {
+			log.Printf("[edge] heartbeat failed: %v", err)
+		} else {
+			log.Printf("[edge] heartbeat sent (cpu=%.1f%%, mem=%.1f%%, disk=%.1f%%, load=%.1f)",
+				m.CPUUsage, m.MemUsage, m.DiskUsage, m.LoadAvg)
+		}
+	}
 }
