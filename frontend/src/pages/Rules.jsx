@@ -19,6 +19,8 @@ import SelectAllIcon from '@mui/icons-material/SelectAll'
 import CloseIcon from '@mui/icons-material/Close'
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward'
 import PublicIcon from '@mui/icons-material/Public'
+import MemoryIcon from '@mui/icons-material/Memory'
+import BlockIcon from '@mui/icons-material/Block'
 import { rulesApi, nodesApi } from '../api/index.js'
 import { exportToCSV } from '../utils/csv.js'
 
@@ -33,6 +35,7 @@ const RULE_TYPE_META = {
 const EMPTY_ROUTING_FORM = {
   name: '', domain: '', description: '', strategy: 'round-robin',
   node_ids: '[]', origin_base_url: '', enabled: true,
+  cache_ttl_seconds: null, cache_control_override: '', bypass_cache: false,
 }
 const EMPTY_REDIRECT_FORM = {
   name: '', domain: '', description: '',
@@ -147,15 +150,26 @@ function RoutingRulePreview({ rule, nodes }) {
             color="secondary" variant="outlined" sx={{ height: 20, '& .MuiChip-icon': { fontSize: 11 } }} />
           <Chip label={STRATEGY_LABELS[rule.strategy] || rule.strategy} size="small"
             color={STRATEGY_COLORS[rule.strategy] || 'default'} sx={{ height: 20, fontSize: 10, fontWeight: 600 }} />
+          {rule.bypass_cache && (
+            <Chip icon={<BlockIcon />} label="跳过缓存" size="small"
+              color="error" variant="outlined" sx={{ height: 20, fontSize: 10, '& .MuiChip-icon': { fontSize: 11 } }} />
+          )}
         </Box>
       </Box>
       <ArrowForwardIcon sx={{ fontSize: 16, color: 'primary.main', flexShrink: 0 }} />
-      <Typography variant="body2" sx={{
-        fontFamily: 'monospace', fontSize: 12, fontWeight: 600,
-        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
-      }}>
-        {nodeNames.join(', ') || '-'}
-      </Typography>
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Typography variant="body2" sx={{
+          fontFamily: 'monospace', fontSize: 12, fontWeight: 600,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>
+          {nodeNames.join(', ') || '-'}
+        </Typography>
+        {rule.cache_ttl_seconds != null && rule.cache_ttl_seconds > 0 && (
+          <Typography variant="caption" color="success.main" sx={{ fontSize: 10, fontWeight: 600 }}>
+            TTL {rule.cache_ttl_seconds}s
+          </Typography>
+        )}
+      </Box>
     </Box>
   )
 }
@@ -560,6 +574,27 @@ function Rules() {
                   onChange={handleRoutingChange('origin_base_url')} fullWidth size="small"
                   placeholder="例如：http://origin-server:80"
                   helperText="Edge 节点缓存未命中时从此地址拉取" />
+              </FormSection>
+              <Divider />
+              <FormSection title="缓存配置" optional>
+                <TextField label="缓存 TTL（秒）" type="number" value={routingForm.cache_ttl_seconds ?? ''}
+                  onChange={e => setRoutingForm(p => ({ ...p, cache_ttl_seconds: e.target.value === '' ? null : Number(e.target.value) }))}
+                  fullWidth size="small" placeholder="留空使用全局默认值"
+                  helperText="覆盖此域名的全局缓存 TTL。设为 0 表示不缓存" inputProps={{ min: 0 }} />
+                <TextField label="Cache-Control 覆盖" value={routingForm.cache_control_override}
+                  onChange={handleRoutingChange('cache_control_override')} fullWidth size="small"
+                  placeholder="例如：public, max-age=3600"
+                  helperText="强制改写源站的 Cache-Control 响应头，留空则使用源站值" />
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                  <Switch checked={routingForm.bypass_cache}
+                    onChange={e => setRoutingForm(p => ({ ...p, bypass_cache: e.target.checked }))} size="small" />
+                  <Box>
+                    <Typography variant="body2" sx={{ fontWeight: 600 }}>跳过缓存</Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      开启后 Edge 节点将跳过缓存，每次请求直接回源
+                    </Typography>
+                  </Box>
+                </Box>
               </FormSection>
             </Stack>
           ) : (

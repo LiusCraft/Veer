@@ -23,5 +23,10 @@ type RedirectRule struct {
 	TargetPath   string `json:"target_path" gorm:"size:512"`
 	RedirectCode int    `json:"redirect_code" gorm:"default:302"`
 
+	// Per-domain cache configuration (edge nodes consume these)
+	CacheTTLSeconds      *int   `json:"cache_ttl_seconds" gorm:"default:null"`
+	CacheControlOverride string `json:"cache_control_override" gorm:"size:128;default:''"`
+	BypassCache          bool   `json:"bypass_cache" gorm:"default:false"`
+
 	CreatedAt time.Time `json:"created_at"`
 }

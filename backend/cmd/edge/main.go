@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -17,8 +18,12 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	log.Printf("Edge node %q starting (listen: %s:%d, public: %s)",
-		cfg.Edge.Name, cfg.Edge.Host, cfg.Edge.Port, cfg.Edge.PublicURL)
+	diskCacheStatus := "disabled"
+	if cfg.Edge.Cache.Disk.Enabled {
+		diskCacheStatus = fmt.Sprintf("enabled (path=%s, max_size=%dGB)", cfg.Edge.Cache.Disk.Path, cfg.Edge.Cache.Disk.MaxSizeGB)
+	}
+	log.Printf("Edge node %q starting (listen: %s:%d, public: %s, disk_cache: %s)",
+		cfg.Edge.Name, cfg.Edge.Host, cfg.Edge.Port, cfg.Edge.PublicURL, diskCacheStatus)
 
 	if cfg.Edge.Manager.URL != "" {
 		if err := edge.RegisterWithManager(&cfg.Edge); err != nil {
