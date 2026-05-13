@@ -1,6 +1,6 @@
 version: '3.8'
 services:
-  veer:
+  manager:
     build:
       context: ..
       dockerfile: backend/Dockerfile
@@ -14,6 +14,64 @@ services:
       - CDNC_DB_PATH=/app/data/veer.db
       - CDNC_JWT_SECRET=change-me-in-production-256bits
       - CDNC_ADMIN_PASSWORD=admin123
+    restart: unless-stopped
+
+  scheduler:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.scheduler
+    ports:
+      - "8081:8081"
+    volumes:
+      - veer-data:/app/data
+    environment:
+      - CDNC_SCHEDULER_HOST=0.0.0.0
+      - CDNC_SCHEDULER_PORT=8081
+      - CDNC_DB_PATH=/app/data/veer.db
+    depends_on:
+      - manager
+    restart: unless-stopped
+
+  edge-1:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.edge
+    ports:
+      - "8082:8082"
+    environment:
+      - CDNC_EDGE_HOST=0.0.0.0
+      - CDNC_EDGE_PORT=8082
+      - CDNC_EDGE_NAME=edge-1
+      - CDNC_EDGE_REGION=华东
+      - CDNC_EDGE_PUBLIC_URL=http://localhost:8082
+      - CDNC_EDGE_MANAGER_URL=http://manager:8080
+      - CDNC_EDGE_MANAGER_SECRET=veer-edge-secret
+      - CDNC_EDGE_ORIGIN_BASE_URL=http://origin:80
+      - CDNC_EDGE_CACHE_TTL_SECONDS=300
+      - CDNC_EDGE_CACHE_MAX_SIZE_MB=512
+    depends_on:
+      - manager
+    restart: unless-stopped
+
+  edge-2:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile.edge
+    ports:
+      - "8083:8082"
+    environment:
+      - CDNC_EDGE_HOST=0.0.0.0
+      - CDNC_EDGE_PORT=8082
+      - CDNC_EDGE_NAME=edge-2
+      - CDNC_EDGE_REGION=华南
+      - CDNC_EDGE_PUBLIC_URL=http://localhost:8083
+      - CDNC_EDGE_MANAGER_URL=http://manager:8080
+      - CDNC_EDGE_MANAGER_SECRET=veer-edge-secret
+      - CDNC_EDGE_ORIGIN_BASE_URL=http://origin:80
+      - CDNC_EDGE_CACHE_TTL_SECONDS=300
+      - CDNC_EDGE_CACHE_MAX_SIZE_MB=512
+    depends_on:
+      - manager
     restart: unless-stopped
 
 volumes:

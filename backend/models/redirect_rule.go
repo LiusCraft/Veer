@@ -4,14 +4,14 @@ package models
 import "time"
 
 // RedirectRule represents a URL redirect rule with associated CDN nodes.
-// Key + Domain 构成联合唯一索引，支持按域名分流
+// Domain 是主查找键，请求的 Host 匹配 Domain 后执行 302 重定向
 type RedirectRule struct {
-	ID          uint      `json:"id" gorm:"primarykey"`
-	Key         string    `json:"key" gorm:"uniqueIndex:idx_rule_key_domain"`                                         // 联合唯一索引，与 Domain 一起
-	Domain      string    `json:"domain" gorm:"uniqueIndex:idx_rule_key_domain;default:'';index:idx_rule_key_domain"` // 目标域名，空表示通用规则
-	Description string    `json:"description"`
-	Strategy    string    `json:"strategy" gorm:"default:'round-robin'"` // round-robin/weighted/random
-	NodeIDs     string    `json:"node_ids"`                              // JSON array string, e.g. "[1,2,3]"
-	HitCount    int64     `json:"hit_count"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID            uint      `json:"id" gorm:"primarykey"`
+	Domain        string    `json:"domain" gorm:"uniqueIndex;not null"` // 唯一域名，调度器通过 Host 匹配此字段
+	Description   string    `json:"description"`
+	Strategy      string    `json:"strategy" gorm:"default:'round-robin'"`      // round-robin/weighted/random
+	NodeIDs       string    `json:"node_ids"`                                   // JSON array string, e.g. "[1,2,3]"
+	OriginBaseURL string    `json:"origin_base_url" gorm:"size:512;default:''"` // 回源地址，Edge 节点缓存未命中时使用
+	HitCount      int64     `json:"hit_count"`
+	CreatedAt     time.Time `json:"created_at"`
 }

@@ -47,11 +47,11 @@ import useTableSearch from '../hooks/useTableSearch.js'
 import { exportToCSV } from '../utils/csv.js'
 
 const EMPTY_FORM = {
-  key: '',
   domain: '',
   description: '',
   strategy: 'round-robin',
   node_ids: '[]',
+  origin_base_url: '',
 }
 
 /**
@@ -72,8 +72,8 @@ function Rules() {
 
   const { search, setSearch, sortField, sortDir, handleSort, filteredData } = useTableSearch(
     rules,
-    ['key', 'domain', 'description', 'strategy'],
-    'key',
+    ['domain', 'description', 'strategy'],
+    'domain',
     'asc'
   )
 
@@ -109,11 +109,11 @@ function Rules() {
       const ids = parseNodeIds(rule.node_ids)
       setSelectedNodeIds(ids)
       setForm({
-        key: rule.key,
         domain: rule.domain || '',
         description: rule.description || '',
         strategy: rule.strategy,
         node_ids: rule.node_ids,
+        origin_base_url: rule.origin_base_url || '',
       })
     } else {
       setEditingRule(null)
@@ -140,19 +140,19 @@ function Rules() {
   }
 
   const handleSave = async () => {
-    if (!form.key.trim()) {
-      setError('规则 Key 不能为空')
+    if (!form.domain.trim()) {
+      setError('调度域名不能为空')
       return
     }
     setSaving(true)
     setError('')
     try {
       const payload = {
-        key: form.key.trim(),
         domain: form.domain.trim(),
         description: form.description,
         strategy: form.strategy,
         node_ids: JSON.stringify(selectedNodeIds),
+        origin_base_url: form.origin_base_url.trim(),
       }
       if (editingRule) {
         await rulesApi.update(editingRule.id, payload)
@@ -178,10 +178,11 @@ function Rules() {
     }
   }
 
-  const handleCopyLink = (ruleKey) => {
-    const link = `${window.location.protocol}//${window.location.hostname}:8080/r/${ruleKey}`
+  const handleCopyLink = (rule) => {
+    if (!rule.domain) return
+    const link = `${window.location.protocol}//${rule.domain}`
     navigator.clipboard.writeText(link).then(() => {
-      setSnackbar({ open: true, message: `已复制跳转链接: ${link}` })
+      setSnackbar({ open: true, message: `已复制调度域名: ${link}` })
     })
   }
 
@@ -228,9 +229,9 @@ function Rules() {
     const today = new Date().toISOString().slice(0, 10)
     const filename = `rules-${today}.csv`
     const columns = [
-      { key: 'key', label: '规则Key' },
       { key: 'domain', label: '域名' },
       { key: 'description', label: '描述' },
+      { key: 'origin_base_url', label: '回源地址' },
       { key: 'strategy', label: '路由策略' },
       { key: 'hit_count', label: '命中次数' },
       { key: 'created_at', label: '创建时间' },
@@ -293,7 +294,7 @@ function Rules() {
       <Card sx={{ p: 2, mb: 2 }}>
         <TextField
           size="small"
-          placeholder="搜索规则 Key、域名、描述、策略..."
+          placeholder="搜索域名、描述、策略..."
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           InputProps={{
@@ -346,26 +347,25 @@ function Rules() {
                     onChange={handleSelectAll}
                   />
                 </TableCell>
-                {sortCell('key', '规则 Key')}
                 {sortCell('domain', '域名')}
                 <TableCell>描述</TableCell>
                 {sortCell('strategy', '路由策略', 'center')}
                 <TableCell>绑定节点</TableCell>
                 {sortCell('hit_count', '命中次数', 'center')}
-                <TableCell>跳转示例</TableCell>
+                <TableCell>调度域名</TableCell>
                 <TableCell align="center">操作</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={9} align="center" sx={{ py: 4 }}>
+                  <TableCell colSpan={8} align="center" sx={{ py: 4 }}>
                     <CircularProgress size={32} />
                   </TableCell>
                 </TableRow>
               ) : filteredData.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={9} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                  <TableRow>
+                    <TableCell colSpan={8} align="center" sx={{ py: 4, color: 'text.secondary' }}>
                     {search ? '未找到匹配的规则' : '暂无规则，点击「新增规则」添加'}
                   </TableCell>
                 </TableRow>
@@ -384,14 +384,6 @@ function Rules() {
                           checked={isItemSelected}
                           onChange={() => handleSelectOne(rule.id)}
                         />
-                      </TableCell>
-                      <TableCell>
-                        <Typography
-                          variant="body2"
-                          sx={{ fontFamily: 'monospace', fontWeight: 700, color: 'primary.main' }}
-                        >
-                          {rule.key}
-                        </Typography>
                       </TableCell>
                       <TableCell>
                         {rule.domain ? (
@@ -424,13 +416,13 @@ function Rules() {
                           variant="caption"
                           sx={{ fontFamily: 'monospace', color: 'text.secondary' }}
                         >
-                          /r/{rule.key}
+                          {rule.domain || '-'}
                         </Typography>
                       </TableCell>
                       <TableCell align="center">
                         <Stack direction="row" spacing={0.5} justifyContent="center">
-                          <Tooltip title="复制跳转链接">
-                            <IconButton size="small" color="default" onClick={() => handleCopyLink(rule.key)}>
+                          <Tooltip title="复制调度域名">
+                            <IconButton size="small" color="default" onClick={() => handleCopyLink(rule)}>
                               <ContentCopyIcon fontSize="small" />
                             </IconButton>
                           </Tooltip>
@@ -461,22 +453,13 @@ function Rules() {
         <DialogContent sx={{ pt: 2 }}>
           <Stack spacing={2} sx={{ mt: 1 }}>
             <TextField
-              label="规则 Key"
-              value={form.key}
-              onChange={handleFormChange('key')}
-              required
-              fullWidth
-              placeholder="例如：video、static、img"
-              disabled={!!editingRule}
-              helperText={`访问路径：/r/${form.key || '<key>'}`}
-            />
-            <TextField
               label="域名"
               value={form.domain}
               onChange={handleFormChange('domain')}
+              required
               fullWidth
-              placeholder="例如：cdn.example.com（留空表示通用规则）"
-              helperText="留空表示匹配所有域名，填写后仅匹配该域名的请求"
+              placeholder="例如：cdn.example.com"
+              helperText="调度器通过此域名匹配请求（Host 头），域名须唯一"
             />
             <TextField
               label="描述"
@@ -520,6 +503,14 @@ function Rules() {
               </Select>
               <FormHelperText>可多选，将按策略负载均衡到所选节点</FormHelperText>
             </FormControl>
+            <TextField
+              label="回源地址"
+              value={form.origin_base_url}
+              onChange={handleFormChange('origin_base_url')}
+              fullWidth
+              placeholder="例如：http://origin-server:80"
+              helperText="可选。Edge 节点缓存未命中时从此地址拉取，留空则使用节点默认回源"
+            />
           </Stack>
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>

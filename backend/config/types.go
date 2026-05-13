@@ -14,6 +14,8 @@ import (
 // Config 应用程序根配置结构
 type Config struct {
 	Server      ServerConfig      `mapstructure:"server"`
+	Scheduler   SchedulerConfig   `mapstructure:"scheduler"`
+	Edge        EdgeConfig        `mapstructure:"edge"`
 	Database    DatabaseConfig    `mapstructure:"database"`
 	JWT         JWTConfig         `mapstructure:"jwt"`
 	Admin       AdminConfig       `mapstructure:"admin"`
@@ -22,10 +24,17 @@ type Config struct {
 	Cache       CacheConfig       `mapstructure:"cache"`
 }
 
-// ServerConfig 服务器配置
+// ServerConfig Manager 服务配置
 type ServerConfig struct {
 	Host string `mapstructure:"host" default:"0.0.0.0"`
 	Port int    `mapstructure:"port" default:"8080"`
+}
+
+// SchedulerConfig 调度服务配置
+type SchedulerConfig struct {
+	Host            string `mapstructure:"host" default:"0.0.0.0"`
+	Port            int    `mapstructure:"port" default:"8081"`
+	RefreshInterval int    `mapstructure:"refresh_interval" default:"10"`
 }
 
 // DatabaseConfig 数据库配置
@@ -65,6 +74,30 @@ type CacheConfig struct {
 	MaxAgeSeconds int `mapstructure:"max_age_seconds" default:"300"`
 }
 
+// EdgeConfig 边缘节点服务配置
+type EdgeConfig struct {
+	Host          string            `mapstructure:"host" default:"0.0.0.0"`
+	Port          int               `mapstructure:"port" default:"8082"`
+	Name          string            `mapstructure:"name" default:"edge-1"`
+	Region        string            `mapstructure:"region" default:"default"`
+	PublicURL     string            `mapstructure:"public_url" default:"http://localhost:8082"` // 对外地址（Manager 用此做 302 跳转）
+	Manager       EdgeManagerConfig `mapstructure:"manager"`                                    // Manager 连接配置
+	OriginBaseURL string            `mapstructure:"origin_base_url" default:"http://origin:80"` // 回源地址（未从 Manager 拉取时用）
+	Cache         EdgeCacheConfig   `mapstructure:"cache"`
+}
+
+// EdgeManagerConfig 边缘节点连接 Manager 的配置
+type EdgeManagerConfig struct {
+	URL    string `mapstructure:"url" default:"http://localhost:8080"`
+	Secret string `mapstructure:"secret" default:"veer-edge-secret"`
+}
+
+// EdgeCacheConfig 边缘节点缓存配置
+type EdgeCacheConfig struct {
+	TTLSeconds int `mapstructure:"ttl_seconds" default:"300"`
+	MaxSizeMB  int `mapstructure:"max_size_mb" default:"512"`
+}
+
 // JWTClaims JWT 令牌中的声明结构
 type JWTClaims struct {
 	UserID   uint   `json:"user_id"`
@@ -102,6 +135,21 @@ func LoadConfig() (*Config, error) {
 	_ = viper.BindEnv("health_check.enabled", "CDNC_HEALTH_CHECK_ENABLED")
 	_ = viper.BindEnv("rate_limit.enabled", "CDNC_RATE_LIMIT_ENABLED")
 	_ = viper.BindEnv("rate_limit.requests_per_minute", "CDNC_RATE_LIMIT_REQUESTS_PER_MINUTE")
+	_ = viper.BindEnv("scheduler.host", "CDNC_SCHEDULER_HOST")
+	_ = viper.BindEnv("scheduler.port", "CDNC_SCHEDULER_PORT")
+	_ = viper.BindEnv("scheduler.refresh_interval", "CDNC_SCHEDULER_REFRESH_INTERVAL")
+
+	// Edge env bindings
+	_ = viper.BindEnv("edge.host", "CDNC_EDGE_HOST")
+	_ = viper.BindEnv("edge.port", "CDNC_EDGE_PORT")
+	_ = viper.BindEnv("edge.name", "CDNC_EDGE_NAME")
+	_ = viper.BindEnv("edge.region", "CDNC_EDGE_REGION")
+	_ = viper.BindEnv("edge.public_url", "CDNC_EDGE_PUBLIC_URL")
+	_ = viper.BindEnv("edge.manager.url", "CDNC_EDGE_MANAGER_URL")
+	_ = viper.BindEnv("edge.manager.secret", "CDNC_EDGE_MANAGER_SECRET")
+	_ = viper.BindEnv("edge.origin_base_url", "CDNC_EDGE_ORIGIN_BASE_URL")
+	_ = viper.BindEnv("edge.cache.ttl_seconds", "CDNC_EDGE_CACHE_TTL_SECONDS")
+	_ = viper.BindEnv("edge.cache.max_size_mb", "CDNC_EDGE_CACHE_MAX_SIZE_MB")
 
 	// 设置默认值
 	setDefaults()
@@ -153,6 +201,23 @@ func setDefaults() {
 
 	// Cache defaults
 	viper.SetDefault("cache.max_age_seconds", 300)
+
+	// Scheduler defaults
+	viper.SetDefault("scheduler.host", "0.0.0.0")
+	viper.SetDefault("scheduler.port", 8081)
+	viper.SetDefault("scheduler.refresh_interval", 10)
+
+	// Edge defaults
+	viper.SetDefault("edge.host", "0.0.0.0")
+	viper.SetDefault("edge.port", 8082)
+	viper.SetDefault("edge.name", "edge-1")
+	viper.SetDefault("edge.region", "default")
+	viper.SetDefault("edge.public_url", "http://localhost:8082")
+	viper.SetDefault("edge.manager.url", "")
+	viper.SetDefault("edge.manager.secret", "veer-edge-secret")
+	viper.SetDefault("edge.origin_base_url", "http://origin:80")
+	viper.SetDefault("edge.cache.ttl_seconds", 300)
+	viper.SetDefault("edge.cache.max_size_mb", 512)
 }
 
 // GetExpiryDuration 返回 JWT 过期时长（作为 time.Duration）

@@ -45,9 +45,8 @@ func SeedData(db *gorm.DB) {
 	db.Model(&models.CdnNode{}).Count(&nodeCount)
 	if nodeCount == 0 {
 		nodes := []models.CdnNode{
-			{Name: "阿里云-华东", URL: "https://cdn-east.aliyun-demo.com", Weight: 3, Region: "华东", Status: "active", Latency: 0},
-			{Name: "腾讯云-华南", URL: "https://cdn-south.tencent-demo.com", Weight: 2, Region: "华南", Status: "active", Latency: 0},
-			{Name: "AWS-美国西部", URL: "https://cdn-us-west.aws-demo.com", Weight: 1, Region: "美国西部", Status: "active", Latency: 0},
+			{Name: "Edge节点-华东", URL: "http://edge-1:8082", Weight: 3, Region: "华东", Status: "active", Latency: 0},
+			{Name: "Edge节点-华南", URL: "http://edge-2:8082", Weight: 2, Region: "华南", Status: "active", Latency: 0},
 		}
 		if result := db.Create(&nodes); result.Error != nil {
 			log.Printf("Failed to seed nodes: %v", result.Error)
@@ -56,20 +55,19 @@ func SeedData(db *gorm.DB) {
 		log.Println("Seeded 3 CDN nodes")
 
 		// Seed redirect rules
-		nodeIDs12, _ := json.Marshal([]uint{nodes[0].ID, nodes[1].ID})
-		nodeIDsAll, _ := json.Marshal([]uint{nodes[0].ID, nodes[1].ID, nodes[2].ID})
+		nodeIDsAll, _ := json.Marshal([]uint{nodes[0].ID, nodes[1].ID})
 		rules := []models.RedirectRule{
 			{
-				Key:         "video",
-				Description: "视频资源分发",
-				Strategy:    "weighted",
-				NodeIDs:     string(nodeIDs12),
+				Domain:      "cdn.veer.local",
+				Description: "静态资源分发",
+				Strategy:    "round-robin",
+				NodeIDs:     string(nodeIDsAll),
 				HitCount:    0,
 			},
 			{
-				Key:         "static",
-				Description: "静态资源分发",
-				Strategy:    "round-robin",
+				Domain:      "video.veer.local",
+				Description: "视频资源分发",
+				Strategy:    "weighted",
 				NodeIDs:     string(nodeIDsAll),
 				HitCount:    0,
 			},

@@ -1,4 +1,3 @@
-// Package handlers provides HTTP request handlers for the Veer system.
 package handlers
 
 import (
@@ -6,6 +5,7 @@ import (
 	"net/http"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"veer/models"
 
@@ -13,56 +13,23 @@ import (
 	"gorm.io/gorm"
 )
 
-// keyPattern 验证 key 字段的正则表达式：3-64个字符，小写字母、数字、连字符
-var keyPattern = regexp.MustCompile(`^[a-z0-9-]{3,64}$`)
-
-// validStrategies 有效的策略列表
 var validStrategies = []string{"round-robin", "weighted", "random"}
 
-// validateKey 验证 key 字段格式
-//
-// 参数:
-//   - key: 待验证的 key 值
-//
-// 返回:
-//   - bool: 是否有效
-//   - string: 错误信息（如果无效）
-func validateKey(key string) (bool, string) {
-	if key == "" {
-		return false, "key 不能为空"
-	}
-	if !keyPattern.MatchString(key) {
-		return false, "key 必须为 3-64 个字符，只能包含小写字母、数字和连字符"
-	}
-	return true, ""
-}
+var domainPattern = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?)*$`)
 
-// validateDomain 验证 domain 字段格式
-//
-// 参数:
-//   - domain: 待验证的域名值（可为空）
-//
-// 返回:
-//   - bool: 是否有效
-//   - string: 错误信息（如果无效）
 func validateDomain(domain string) (bool, string) {
 	if domain == "" {
-		return true, "" // 允许为空，表示通用规则
+		return false, "domain 不能为空"
 	}
 	if len(domain) > 253 {
 		return false, "domain 最大 253 个字符"
 	}
+	if !domainPattern.MatchString(domain) {
+		return false, "domain 格式无效，应为合法的域名，如 cdn.example.com"
+	}
 	return true, ""
 }
 
-// validateStrategy 验证 strategy 字段
-//
-// 参数:
-//   - strategy: 待验证的策略值
-//
-// 返回:
-//   - bool: 是否有效
-//   - string: 错误信息（如果无效）
 func validateStrategy(strategy string) (bool, string) {
 	for _, valid := range validStrategies {
 		if strategy == valid {
@@ -72,14 +39,6 @@ func validateStrategy(strategy string) (bool, string) {
 	return false, "strategy 必须是 round-robin、weighted 或 random 之一"
 }
 
-// validateNodeIDs 验证 node_ids 字段是否为有效的 JSON 数组
-//
-// 参数:
-//   - nodeIDs: 待验证的 node_ids 值
-//
-// 返回:
-//   - bool: 是否有效
-//   - string: 错误信息（如果无效）
 func validateNodeIDs(nodeIDs string) (bool, string) {
 	if nodeIDs == "" {
 		return false, "node_ids 不能为空"
@@ -94,7 +53,6 @@ func validateNodeIDs(nodeIDs string) (bool, string) {
 	return true, ""
 }
 
-// ListRules 处理 GET /api/rules — 列出所有重定向规则
 func ListRules(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var rules []models.RedirectRule
@@ -106,17 +64,27 @@ func ListRules(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-// CreateRule 处理 POST /api/rules — 创建新的重定向规则
-//
-// 请求体新增 domain 字段支持
+func validateOriginURL(origin string) (bool, string) {
+	if origin == "" {
+		return true, ""
+	}
+	if len(origin) > 512 {
+		return false, "origin_base_url 最大 512 个字符"
+	}
+	if origin != "" && !strings.HasPrefix(origin, "http://") && !strings.HasPrefix(origin, "https://") {
+		return false, "origin_base_url 必须以 http:// 或 https:// 开头"
+	}
+	return true, ""
+}
+
 func CreateRule(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
-			Key         string `json:"key" binding:"required"`
-			Domain      string `json:"domain"`
-			Description string `json:"description"`
-			Strategy    string `json:"strategy"`
-			NodeIDs     string `json:"node_ids"`
+			Domain        string `json:"domain" binding:"required"`
+			Description   string `json:"description"`
+			Strategy      string `json:"strategy"`
+			NodeIDs       string `json:"node_ids"`
+			OriginBaseURL string `json:"origin_base_url"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -124,19 +92,11 @@ func CreateRule(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// 手动校验 key 格式
-		if ok, errMsg := validateKey(body.Key); !ok {
-			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
-			return
-		}
-
-		// 校验 domain 格式
 		if ok, errMsg := validateDomain(body.Domain); !ok {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 			return
 		}
 
-		// 设置默认策略并校验
 		if body.Strategy == "" {
 			body.Strategy = "round-robin"
 		}
@@ -145,19 +105,22 @@ func CreateRule(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// 校验 node_ids 格式
 		if ok, errMsg := validateNodeIDs(body.NodeIDs); !ok {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 			return
 		}
 
-		// 创建规则
+		if ok, errMsg := validateOriginURL(body.OriginBaseURL); !ok {
+			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+			return
+		}
+
 		rule := models.RedirectRule{
-			Key:         body.Key,
-			Domain:      body.Domain,
-			Description: body.Description,
-			Strategy:    body.Strategy,
-			NodeIDs:     body.NodeIDs,
+			Domain:        body.Domain,
+			Description:   body.Description,
+			Strategy:      body.Strategy,
+			NodeIDs:       body.NodeIDs,
+			OriginBaseURL: body.OriginBaseURL,
 		}
 
 		if err := db.Create(&rule).Error; err != nil {
@@ -168,9 +131,6 @@ func CreateRule(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-// UpdateRule 处理 PUT /api/rules/:id — 更新重定向规则
-//
-// 请求体新增 domain 字段支持
 func UpdateRule(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id, err := strconv.ParseUint(c.Param("id"), 10, 64)
@@ -186,11 +146,11 @@ func UpdateRule(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		var body struct {
-			Key         string `json:"key"`
-			Domain      string `json:"domain"`
-			Description string `json:"description"`
-			Strategy    string `json:"strategy"`
-			NodeIDs     string `json:"node_ids"`
+			Domain        string `json:"domain"`
+			Description   string `json:"description"`
+			Strategy      string `json:"strategy"`
+			NodeIDs       string `json:"node_ids"`
+			OriginBaseURL string `json:"origin_base_url"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -198,16 +158,6 @@ func UpdateRule(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// 校验 key 格式（如果提供了）
-		if body.Key != "" {
-			if ok, errMsg := validateKey(body.Key); !ok {
-				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
-				return
-			}
-			rule.Key = body.Key
-		}
-
-		// 校验 domain 格式（如果提供了）
 		if body.Domain != "" {
 			if ok, errMsg := validateDomain(body.Domain); !ok {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
@@ -216,7 +166,6 @@ func UpdateRule(db *gorm.DB) gin.HandlerFunc {
 			rule.Domain = body.Domain
 		}
 
-		// 校验 strategy（如果提供了）
 		if body.Strategy != "" {
 			if ok, errMsg := validateStrategy(body.Strategy); !ok {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
@@ -225,13 +174,20 @@ func UpdateRule(db *gorm.DB) gin.HandlerFunc {
 			rule.Strategy = body.Strategy
 		}
 
-		// 校验 node_ids 格式（如果提供了）
 		if body.NodeIDs != "" {
 			if ok, errMsg := validateNodeIDs(body.NodeIDs); !ok {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 				return
 			}
 			rule.NodeIDs = body.NodeIDs
+		}
+
+		if body.OriginBaseURL != rule.OriginBaseURL {
+			if ok, errMsg := validateOriginURL(body.OriginBaseURL); !ok {
+				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
+				return
+			}
+			rule.OriginBaseURL = body.OriginBaseURL
 		}
 
 		rule.Description = body.Description

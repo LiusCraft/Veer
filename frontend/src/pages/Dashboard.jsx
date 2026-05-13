@@ -203,7 +203,7 @@ function Dashboard() {
                         <TableRow key={log.id} hover>
                           <TableCell>
                             <Typography variant="caption" sx={{ fontFamily: 'monospace', fontWeight: 600 }}>
-                              {log.rule_key}
+                              {log.domain || '-'}
                             </Typography>
                           </TableCell>
                           <TableCell>

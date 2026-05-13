@@ -16,26 +16,18 @@ import {
   TextField,
   TablePagination,
   Button,
-  InputAdornment,
 } from '@mui/material'
-import SearchIcon from '@mui/icons-material/Search'
 import RefreshIcon from '@mui/icons-material/Refresh'
 import ClearIcon from '@mui/icons-material/Clear'
 import FileDownloadIcon from '@mui/icons-material/FileDownload'
-import FilterListIcon from '@mui/icons-material/FilterList'
 import { statsApi } from '../api/index.js'
 import { exportToCSV } from '../utils/csv.js'
 
-/**
- * Logs page showing paginated access logs with rule key and time range filtering.
- */
 function Logs() {
   const [logs, setLogs] = useState([])
   const [total, setTotal] = useState(0)
-  const [page, setPage] = useState(0) // MUI uses 0-indexed
+  const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(20)
-  const [ruleKeyFilter, setRuleKeyFilter] = useState('')
-  const [filterInput, setFilterInput] = useState('')
   const [startTime, setStartTime] = useState('')
   const [endTime, setEndTime] = useState('')
   const [loading, setLoading] = useState(true)
@@ -48,9 +40,6 @@ function Logs() {
       const params = {
         page: page + 1,
         page_size: pageSize,
-      }
-      if (ruleKeyFilter) {
-        params.rule_key = ruleKeyFilter
       }
       if (startTime) {
         params.start_time = startTime
@@ -66,7 +55,7 @@ function Logs() {
     } finally {
       setLoading(false)
     }
-  }, [page, pageSize, ruleKeyFilter, startTime, endTime])
+  }, [page, pageSize, startTime, endTime])
 
   useEffect(() => {
     loadLogs()
@@ -74,12 +63,10 @@ function Logs() {
 
   const handleSearch = () => {
     setPage(0)
-    setRuleKeyFilter(filterInput.trim())
+    loadLogs()
   }
 
   const handleClearFilter = () => {
-    setFilterInput('')
-    setRuleKeyFilter('')
     setStartTime('')
     setEndTime('')
     setPage(0)
@@ -110,7 +97,6 @@ function Logs() {
     const today = new Date().toISOString().slice(0, 10)
     const filename = `access-logs-${today}.csv`
     const columns = [
-      { key: 'rule_key', label: '规则Key' },
       { key: 'domain', label: '域名' },
       { key: 'path', label: '路径' },
       { key: 'node_name', label: '节点名称' },
@@ -122,7 +108,7 @@ function Logs() {
     exportToCSV(logs, filename, columns)
   }
 
-  const hasActiveFilter = ruleKeyFilter || startTime || endTime
+  const hasActiveFilter = startTime || endTime
 
   return (
     <Box>
@@ -141,24 +127,8 @@ function Logs() {
         </Alert>
       )}
 
-      {/* Filter bar */}
       <Card sx={{ p: 2, mb: 2 }}>
         <Stack direction="row" spacing={2} alignItems="center" flexWrap="wrap">
-          <TextField
-            size="small"
-            placeholder="按规则 Key 筛选"
-            value={filterInput}
-            onChange={(e) => setFilterInput(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon fontSize="small" />
-                </InputAdornment>
-              ),
-            }}
-            sx={{ width: 200 }}
-          />
           <TextField
             size="small"
             label="开始时间"
@@ -206,8 +176,8 @@ function Logs() {
             <TableHead>
               <TableRow>
                 <TableCell>时间</TableCell>
-                <TableCell>规则 Key</TableCell>
                 <TableCell>域名</TableCell>
+                <TableCell>路径</TableCell>
                 <TableCell>命中节点</TableCell>
                 <TableCell>目标 URL</TableCell>
                 <TableCell>来源 IP</TableCell>
@@ -236,19 +206,16 @@ function Logs() {
                       </Typography>
                     </TableCell>
                     <TableCell>
-                      <Typography
-                        variant="body2"
-                        sx={{ fontFamily: 'monospace', fontWeight: 700, color: 'primary.main' }}
-                      >
-                        {log.rule_key}
-                      </Typography>
-                    </TableCell>
-                    <TableCell>
                       {log.domain ? (
                         <Chip label={log.domain} size="small" variant="outlined" />
                       ) : (
                         <Typography variant="body2" color="text.disabled">-</Typography>
                       )}
+                    </TableCell>
+                    <TableCell>
+                      <Typography variant="caption" sx={{ fontFamily: 'monospace' }}>
+                        {log.path || '-'}
+                      </Typography>
                     </TableCell>
                     <TableCell>
                       <Chip label={log.node_name || `Node#${log.node_id}`} size="small" variant="outlined" />

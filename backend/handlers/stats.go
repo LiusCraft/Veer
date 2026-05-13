@@ -61,7 +61,6 @@ func GetLogs(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		pageStr := c.DefaultQuery("page", "1")
 		pageSizeStr := c.DefaultQuery("page_size", "20")
-		ruleKey := c.Query("rule_key")
 		startTime := c.Query("start_time")
 		endTime := c.Query("end_time")
 
@@ -77,9 +76,6 @@ func GetLogs(db *gorm.DB) gin.HandlerFunc {
 		offset := (page - 1) * pageSize
 
 		query := db.Model(&models.AccessLog{}).Order("created_at desc")
-		if ruleKey != "" {
-			query = query.Where("rule_key = ?", ruleKey)
-		}
 		if startTime != "" {
 			query = query.Where("created_at >= ?", startTime)
 		}

@@ -29,5 +29,31 @@ rate_limit:
     - "127.0.0.1"
     - "::1"
 
+scheduler:
+  host: "0.0.0.0"
+  port: 8081
+  # 规则缓存刷新间隔（秒）
+  refresh_interval: 10
+
+# 边缘节点服务（缓存反向代理）
+edge:
+  host: "0.0.0.0"
+  port: 8082
+  name: "edge-1"
+  region: "default"
+  # 节点对外访问地址（Manager 用此 URL 做 302 跳转）
+  public_url: "http://localhost:8082"
+  # Manager 连接配置（留空则不注册，使用本地配置）
+  manager:
+    url: "http://localhost:8080"
+    secret: "veer-edge-secret"
+  # 默认回源地址（注册后由 Manager 下发覆盖）
+  origin_base_url: "http://origin:80"
+  cache:
+    # 缓存 TTL（秒）
+    ttl_seconds: 300
+    # 最大缓存大小（MB）
+    max_size_mb: 512
+
 cache:
   max_age_seconds: 300
