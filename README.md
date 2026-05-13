@@ -34,7 +34,7 @@ cd backend
 go mod tidy
 
 # 启动服务（端口 8080）
-go run .
+go run ./cmd/manager
 ```
 
 ### 2. 启动前端

@@ -11,6 +11,7 @@ backend/cdn302
 backend/veer
 backend/scheduler
 backend/edge
+backend/manager
 
 # Runtime data
 backend/data/
