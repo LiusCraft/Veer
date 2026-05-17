@@ -32,7 +32,7 @@ type EdgeRegisterResponse struct {
 	CacheMaxSizeMB  int    `json:"cache_max_size_mb"`
 }
 
-func RegisterEdgeHandler(db *gorm.DB, cfg *config.Config) gin.HandlerFunc {
+func RegisterEdgeHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req EdgeRegisterRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
@@ -40,7 +40,7 @@ func RegisterEdgeHandler(db *gorm.DB, cfg *config.Config) gin.HandlerFunc {
 			return
 		}
 
-		if req.Secret != cfg.Edge.Manager.Secret {
+		if req.Secret != cfg.Edge.Secret {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid secret"})
 			return
 		}
@@ -104,13 +104,13 @@ func RegisterEdgeHandler(db *gorm.DB, cfg *config.Config) gin.HandlerFunc {
 	}
 }
 
-func ListEdgeRulesHandler(db *gorm.DB, cfg *config.Config) gin.HandlerFunc {
+func ListEdgeRulesHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		secret := c.GetHeader("X-Edge-Secret")
 		if secret == "" {
 			secret = c.Query("secret")
 		}
-		if secret != cfg.Edge.Manager.Secret {
+		if secret != cfg.Edge.Secret {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid secret"})
 			return
 		}

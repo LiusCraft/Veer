@@ -24,7 +24,7 @@ type LoginResponse struct {
 	Username  string `json:"username"`
 }
 
-func LoginHandler(db *gorm.DB, cfg *config.Config) gin.HandlerFunc {
+func LoginHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var req LoginRequest
 		if err := c.ShouldBindJSON(&req); err != nil {

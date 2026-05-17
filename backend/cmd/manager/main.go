@@ -12,12 +12,12 @@ import (
 )
 
 func main() {
-	cfg, err := config.LoadConfig("config-manager")
+	cfg, err := config.LoadManagerConfig()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	log.Printf("Manager service starting on %s:%d", cfg.Server.Host, cfg.Server.Port)
+	log.Printf("Manager service starting on %s:%d", cfg.Service.Host, cfg.Service.Port)
 
 	db, err := config.InitDB(cfg.Database.Path)
 	if err != nil {
@@ -58,7 +58,7 @@ func main() {
 
 	var hcm *manager.HealthCheckManager
 	if cfg.HealthCheck.Enabled {
-		hcm = manager.NewHealthCheckManager(db, &cfg.HealthCheck, cfg.Edge.Manager.Secret)
+		hcm = manager.NewHealthCheckManager(db, &cfg.HealthCheck, cfg.Edge.Secret)
 		hcm.Start()
 		log.Printf("Health checker started (interval=%ds, threshold=%d)",
 			cfg.HealthCheck.IntervalSeconds, cfg.HealthCheck.FailThreshold)
@@ -66,7 +66,7 @@ func main() {
 
 	r := manager.SetupManagerRouter(db, cfg, hcm)
 
-	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
+	addr := fmt.Sprintf("%s:%d", cfg.Service.Host, cfg.Service.Port)
 	log.Printf("Veer manager service starting on %s", addr)
 	log.Println("API available at http://" + addr + "/api/")
 	if err := r.Run(addr); err != nil {

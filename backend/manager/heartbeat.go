@@ -12,10 +12,10 @@ import (
 	"gorm.io/gorm"
 )
 
-func NodeHeartbeatHandler(db *gorm.DB, cfg *config.Config) gin.HandlerFunc {
+func NodeHeartbeatHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		secret := c.GetHeader("X-Edge-Secret")
-		if secret == "" || secret != cfg.Edge.Manager.Secret {
+		if secret == "" || secret != cfg.Edge.Secret {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid secret"})
 			return
 		}

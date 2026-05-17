@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func SetupManagerRouter(db *gorm.DB, cfg *config.Config, hcm *HealthCheckManager) *gin.Engine {
+func SetupManagerRouter(db *gorm.DB, cfg *config.ManagerConfig, hcm *HealthCheckManager) *gin.Engine {
 	r := gin.Default()
 
 	r.Use(middleware.CORS())

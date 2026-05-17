@@ -13,31 +13,31 @@ import (
 )
 
 func main() {
-	cfg, err := config.LoadConfig("config-edge")
+	cfg, err := config.LoadEdgeConfig()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
 	diskCacheStatus := "disabled"
-	if cfg.Edge.Cache.Disk.Enabled {
-		diskCacheStatus = fmt.Sprintf("enabled (path=%s, max_size=%dGB)", cfg.Edge.Cache.Disk.Path, cfg.Edge.Cache.Disk.MaxSizeGB)
+	if cfg.Cache.Disk.Enabled {
+		diskCacheStatus = fmt.Sprintf("enabled (path=%s, max_size=%dGB)", cfg.Cache.Disk.Path, cfg.Cache.Disk.MaxSizeGB)
 	}
 	log.Printf("Edge node %q starting (listen: %s:%d, public: %s, disk_cache: %s)",
-		cfg.Edge.Name, cfg.Edge.Host, cfg.Edge.Port, cfg.Edge.PublicURL, diskCacheStatus)
+		cfg.Name, cfg.Service.Host, cfg.Service.Port, cfg.PublicURL, diskCacheStatus)
 
-	if cfg.Edge.Manager.URL != "" {
-		if err := edge.RegisterWithManager(&cfg.Edge); err != nil {
+	if cfg.Manager.URL != "" {
+		if err := edge.RegisterWithManager(cfg); err != nil {
 			log.Printf("[edge] WARNING: manager registration failed (running with local config): %v", err)
 		} else {
-			go edge.StartHeartbeatLoop(&cfg.Edge)
+			go edge.StartHeartbeatLoop(cfg)
 		}
 	} else {
 		log.Println("[edge] no manager URL configured, using local config")
 	}
 
-	server := edge.NewEdgeServer(&cfg.Edge)
+	server := edge.NewEdgeServer(cfg)
 
-	if cfg.Edge.Manager.URL != "" {
+	if cfg.Manager.URL != "" {
 		if err := edge.SyncRules(server); err != nil {
 			log.Printf("[edge] WARNING: failed to sync rules from manager: %v", err)
 		}

@@ -10,12 +10,12 @@ import (
 )
 
 func main() {
-	cfg, err := config.LoadConfig("config-scheduler")
+	cfg, err := config.LoadSchedulerConfig()
 	if err != nil {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	log.Printf("Scheduler service starting on %s:%d", cfg.Scheduler.Host, cfg.Scheduler.Port)
+	log.Printf("Scheduler service starting on %s:%d", cfg.Service.Host, cfg.Service.Port)
 
 	db, err := config.InitDB(cfg.Database.Path)
 	if err != nil {
@@ -30,11 +30,11 @@ func main() {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}
 
-	cache := scheduler.NewRuleCache(db, cfg.Scheduler.RefreshInterval)
+	cache := scheduler.NewRuleCache(db, cfg.RefreshInterval)
 
 	r := scheduler.SetupSchedulerRouter(cache)
 
-	addr := fmt.Sprintf("%s:%d", cfg.Scheduler.Host, cfg.Scheduler.Port)
+	addr := fmt.Sprintf("%s:%d", cfg.Service.Host, cfg.Service.Port)
 	log.Printf("Veer scheduler service starting on %s", addr)
 	if err := r.Run(addr); err != nil {
 		log.Fatalf("Failed to start scheduler: %v", err)

@@ -81,7 +81,7 @@ func (s *EdgeServer) Handler() http.Handler {
 }
 
 func (s *EdgeServer) Start() error {
-	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
+	addr := fmt.Sprintf("%s:%d", s.cfg.Service.Host, s.cfg.Service.Port)
 	log.Printf("[edge] %s starting on %s (public: %s, cache TTL: %ds)",
 		s.cfg.Name, addr, s.cfg.PublicURL, s.cfg.Cache.TTLSeconds)
 
