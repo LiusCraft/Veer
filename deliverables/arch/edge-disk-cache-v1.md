@@ -213,6 +213,9 @@ type CacheRouter struct {
     stats     *CacheStats
 }
 
+// 零拷贝路径（proxyHandler 首选）
+func (cr *CacheRouter) GetBodyReader(key string) (io.ReadCloser, int64, http.Header, int, bool)
+// 传统路径（生成 CacheEntry 供其他模块使用）
 func (cr *CacheRouter) Get(key string) (*CacheEntry, bool)
 func (cr *CacheRouter) Set(key string, entry *CacheEntry)
 func (cr *CacheRouter) Delete(key string)
@@ -220,13 +223,27 @@ func (cr *CacheRouter) Stats() map[string]interface{}
 func (cr *CacheRouter) Stop()
 ```
 
-**Get 路径**：
+**GetBodyReader 路径（零拷贝）**：
+1. 查 L1 RAM → hit 则直接 wrap `entry.Body` 为 `bytes.Reader`，以 `io.ReadCloser` 返回
+2. Disk 层：`DiskReader.Read` 一次性读入完整 entry（含 metadata + body）
+3. **CRC 校验通过后，body 被拷贝为独立 `[]byte`**，不再与 metadata 共享底层数组 → metadata 可立即 GC
+4. 同步将 entry 写入 L1 RAM（晋升为热点）
+5. 以 `bytes.Reader` 返回 body，`proxyHandler` 用 `io.CopyN(w, body, bodyLen)` 写入 socket
+6. 后续同一 key 的请求直接从 L1 RAM 响应
+
+> **为什么选择同步晋升 + `io.CopyN` 而非流式读盘？**  
+>  磁盘 entry 的 CRC32 覆盖整个 entry（含 body），要校验完整性必须先读 body。  
+>  既然 body 已在内核/用户缓冲中，同步晋升到 RAM 仅多一次 memcpy（metadata 可 GC），  
+>  后续请求直接从 RAM 命中，整体吞吐更高。
+
+**Get 路径（传统）**：
 1. 查 L1 RAM → hit 则移至 LRU 链表头部，直接返回
 2. Bloom Filter 判 miss → 不存在则返回
 3. 查稀疏索引 → 不命中则返回
-4. 从磁盘对应 Segment 读取 Entry，并校验 key 是否匹配（防 hash 冲突）
-5. 读到的 entry 写回 L1 RAM（晋升为热点，若 L1 满则淘汰链表尾部）
-6. 返回
+4. `DiskReader.Read` 从磁盘对应 Segment 读取完整 entry，校验 key 匹配（防 hash 冲突）
+5. **body 从 entry buffer 拷贝为独立 `[]byte`**（解决 sub-slice 引用导致 metadata 无法 GC 的问题）
+6. 写入 L1 RAM（晋升为热点，若 L1 满则淘汰链表尾部）
+7. 返回
 
 **Set 路径**：
 1. 写入 L1 RAM（若 L1 满则淘汰链表尾部）
@@ -285,17 +302,30 @@ type DiskWriter struct {
 type DiskReader struct {
     segments   map[uint64]*segmentInfo  // segment_id → file info
     activePath string
-    // segments 从 mmap 或 pread 读
 }
+
+// 标准读：返回 *CacheEntry（body 为独立 []byte 分配，非 metadata buffer 的 sub-slice）
+func (r *DiskReader) Read(loc cacheLocation, expectedKey string) (*CacheEntry, error)
+
+// 流式读：返回 body 的 io.ReadCloser，用于不需要 RAM 晋升的路径（如 compaction 扫描）
+// 注：CRC 校验仍会读取完整 entry，body 读取为避免二次读盘而从校验 buffer 中拷贝
+func (r *DiskReader) ReadBody(loc cacheLocation, expectedKey string) (io.ReadCloser, int64, http.Header, int, error)
 ```
 
 **读策略**：
 - 从稀疏索引拿到 `(segment_id, body_offset, body_len)`
-- 使用 `pread` 或 `mmap` 读 entry（含 key）
+- 使用 `pread` 读 entry（含 key）
 - 校验读出的 key 与请求的 key 一致（防稀疏索引 hash 冲突）
-  - key 匹配 → body 写入 L1，返回
+  - key 匹配 → body 拷贝为独立 `[]byte`，写入 L1，返回
   - key 不匹配 → 删除该稀疏索引条目（碰撞脏数据），降级为扫描整个 Segment 查找正确 entry
-- 读到后写入 L1（晋升）
+
+**零拷贝设计**：
+- `CacheEntry.Body` 从 entry buffer 中拷贝为独立 `[]byte`，而非 sub-slice
+  - 解决了 sub-slice 引用导致整个 entry buffer（含 key / contentType / gob 编码的 Headers）无法 GC 的问题
+  - body 的 backing array 与 metadata 无关，metadata 可立即回收
+- `proxyHandler` 通过 `TieredCache.GetBodyReader` 拿到 body 后以 `io.CopyN` 写入 socket
+  - `bytes.Reader` → socket 路径无中间 buffer
+- 读盘即晋升：一次性 I/O 同时完成"校验 + 服务 + 热点填充"
 
 ### 5.5 Compactor
 
@@ -440,6 +470,8 @@ type EdgeCacheConfig struct {
 
 ### 7.1 读命中流程
 
+`proxyHandler` 首选零拷贝路径 `GetBodyReader`，其内部行为等同于下方的完整 `Get` 流，但返回 body 为 `io.ReadCloser`，写入 socket 时无需中间 buffer：
+
 ```mermaid
 sequenceDiagram
     participant H as proxyHandler
@@ -448,11 +480,13 @@ sequenceDiagram
     participant I as Index
     participant L2 as DiskTier
     
-    H->>R: Get(key)
+    H->>R: GetBodyReader(key)
     R->>L1: 查热点
     alt L1 命中
         L1-->>R: CacheEntry
-        R-->>H: return (HIT)
+        R->>H: io.ReadCloser(body) + headers
+        H->>H: io.CopyN(w, body, len)
+        Note over H: 零拷贝：bytes.Reader → socket
     else L1 miss
         R->>I: Bloom Filter 检查
         alt Bloom: 不存在
@@ -463,11 +497,13 @@ sequenceDiagram
             alt 稀疏索引命中
                 I-->>R: cacheLocation
                 R->>L2: pread(segment, offset, len)
-                L2-->>R: CacheEntry
+                L2-->>R: CacheEntry（body 独立分配）
+                Note over L2,R: CRC 校验 → body 拷贝为独立 []byte，metadata buffer 可 GC
                 R->>R: 校验 key 是否匹配（防 hash 冲突）
                 alt key 匹配
-                    R->>L1: 写入热点（LRU 链表头部）
-                    R-->>H: return (HIT)
+                    R->>L1: 写入热点（同步晋升）
+                    R->>H: io.ReadCloser(body) + headers
+                    H->>H: io.CopyN(w, body, len)
                 else key 不匹配
                     R->>I: 删除碰撞索引条目
                     R->>L2: 扫描对应 Segment 查找
@@ -475,7 +511,7 @@ sequenceDiagram
                     alt 找到
                         R->>I: 更新稀疏索引
                         R->>L1: 写入热点
-                        R-->>H: return (HIT)
+                        R->>H: io.ReadCloser(body) + headers
                     else 未找到
                         R-->>H: return (MISS) → 回源
                     end
@@ -486,7 +522,7 @@ sequenceDiagram
                 alt 找到
                     R->>I: 更新稀疏索引
                     R->>L1: 写入热点
-                    R-->>H: return (HIT)
+                    R->>H: io.ReadCloser(body) + headers
                 else 未找到（Bloom 误判）
                     R-->>H: return (MISS) → 回源
                 end
@@ -672,8 +708,9 @@ backend/cmd/edge/main.go           # 修改：信号处理 + 关闭顺序
 
 | 文件 | 操作 | 说明 |
 |------|------|------|
-| `backend/edge/cache.go` | 重写 | 新增 TieredCache 包装，原有 MemoryCache 留作 RamTier |
-| `backend/edge/server.go` | 修改 | 适配新 CacheRouter，`Stop` 增加 flush |
+| `backend/edge/cache.go` | 重写 | 新增 TieredCache 包装，原有 MemoryCache 留作 RamTier；新增 `GetBodyReader` 零拷贝读路径；新增 `bodyReadCloser` / `nopCloser` 辅助类型 |
+| `backend/edge/disk_reader.go` | 修改 | `Read` 方法中 body 拷贝为独立 `[]byte`（而非 metadata buffer 的 sub-slice）；新增 `ReadBody` 流式读方法；新增 `fileSection` 辅助类型 |
+| `backend/edge/server.go` | 修改 | `proxyHandler` 改用 `GetBodyReader` + `io.CopyN` 零拷贝路径，替换原 `Get` + `w.Write` |
 | `backend/cmd/edge/main.go` | 修改 | 关闭顺序：先 flush 缓存再退出 |
 | `backend/config/types.go` | 修改 | 新增 EdgeDiskCacheConfig 等结构体 |
 | `backend/config/config.go` | 修改 | 新增 disk 相关默认值 + env bindings |
@@ -690,8 +727,9 @@ backend/cmd/edge/main.go           # 修改：信号处理 + 关闭顺序
 | Q3 | Entry Header 中 Headers 的编码格式 | 使用 `gob` 编码（Go 原生、零依赖），迁移时需兼容 |
 | Q4 | 稀疏索引是否需要持久化快照 | 先不做快照，启动时扫描 Entry Index Table 重建（秒级） |
 | Q5 | Compaction 是否需要限速 | 初期不做限速，SSD 场景 compaction 足够快；HDD 场景可通过增大 `min_interval` 控制 |
+| Q6 | 零拷贝策略：流式读盘 vs 同步晋升 + `io.CopyN` | 选择**同步晋升 + `io.CopyN`**。因 CRC32 覆盖 body，读盘必须完整读取 entry；既然 body 已在内核/用户页缓存中，同步写入 RAM 仅多一次 memcpy，后续请求直接命中 L1。若未来需要节省 L1 内存，可改为流式读盘 + 异步晋升（异步 goroutine 二次读盘） |
 
 ---
 
-**文档版本**: v1.0
-**最后更新**: 2026-05-14
+**文档版本**: v1.1
+**最后更新**: 2026-05-18
