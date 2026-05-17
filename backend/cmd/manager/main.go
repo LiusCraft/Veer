@@ -56,8 +56,6 @@ func main() {
 		log.Printf("Created default admin user: %s", cfg.Admin.Username)
 	}
 
-	config.SeedData(db)
-
 	var hcm *manager.HealthCheckManager
 	if cfg.HealthCheck.Enabled {
 		hcm = manager.NewHealthCheckManager(db, &cfg.HealthCheck, cfg.Edge.Manager.Secret)
