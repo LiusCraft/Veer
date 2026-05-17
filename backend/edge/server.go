@@ -140,15 +140,16 @@ func (s *EdgeServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		defaultTTL = time.Duration(*rule.cacheTTLSeconds) * time.Second
 	}
 
-	if entry, ok := s.cache.Get(cacheKey); ok {
-		for k, v := range entry.Headers {
+	if body, bodyLen, headers, statusCode, ok := s.cache.GetBodyReader(cacheKey); ok {
+		defer body.Close()
+		for k, v := range headers {
 			w.Header()[k] = v
 		}
 		w.Header().Set("X-Cache", "HIT")
 		w.Header().Set("X-Edge", s.cfg.Name)
-		w.WriteHeader(entry.StatusCode)
-		if r.Method == http.MethodGet {
-			w.Write(entry.Body)
+		w.WriteHeader(statusCode)
+		if r.Method == http.MethodGet && bodyLen > 0 {
+			io.CopyN(w, body, bodyLen)
 		}
 		return
 	}

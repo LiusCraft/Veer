@@ -1,9 +1,11 @@
 package edge
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -335,6 +337,67 @@ func (tc *TieredCache) Get(key string) (*CacheEntry, bool) {
 
 	return entry, true
 }
+
+type bodyReadCloser struct {
+	reader io.Reader
+	closer io.Closer
+}
+
+func (b *bodyReadCloser) Read(p []byte) (int, error) { return b.reader.Read(p) }
+func (b *bodyReadCloser) Close() error               { return b.closer.Close() }
+
+// GetBodyReader returns a body reader for a cached entry.
+// For RAM hits, wraps the existing []body (no copy).
+// For disk hits, reads the full entry into RAM (with body as an independent
+// allocation, see DiskReader.Read), promotes to the RAM tier so subsequent
+// requests are served from memory, and returns a reader over the body.
+// The caller MUST close the returned io.ReadCloser.
+func (tc *TieredCache) GetBodyReader(key string) (body io.ReadCloser, bodyLen int64, headers http.Header, statusCode int, ok bool) {
+	if entry, entryOk := tc.ramTier.Get(key); entryOk {
+		body = &bodyReadCloser{
+			reader: bytes.NewReader(entry.Body),
+			closer: nopCloser{},
+		}
+		return body, int64(len(entry.Body)), entry.Headers, entry.StatusCode, true
+	}
+
+	if !tc.enabled {
+		return nil, 0, nil, 0, false
+	}
+
+	keyHash := ComputeKeyHash(key)
+	if !tc.index.BloomCheck(keyHash) {
+		return nil, 0, nil, 0, false
+	}
+
+	loc, locOk := tc.index.Lookup(keyHash)
+	if !locOk {
+		return nil, 0, nil, 0, false
+	}
+
+	if loc.ExpiresAt > 0 && time.Now().UnixNano() > loc.ExpiresAt {
+		tc.index.Remove(keyHash)
+		return nil, 0, nil, 0, false
+	}
+
+	entry, err := tc.diskR.Read(loc, key)
+	if err != nil {
+		tc.index.Remove(keyHash)
+		return nil, 0, nil, 0, false
+	}
+
+	tc.ramTier.Set(key, entry)
+
+	body = &bodyReadCloser{
+		reader: bytes.NewReader(entry.Body),
+		closer: nopCloser{},
+	}
+	return body, int64(len(entry.Body)), entry.Headers, entry.StatusCode, true
+}
+
+type nopCloser struct{}
+
+func (nopCloser) Close() error { return nil }
 
 func (tc *TieredCache) Set(key string, entry *CacheEntry) {
 	tc.ramTier.Set(key, entry)

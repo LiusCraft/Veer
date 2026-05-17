@@ -1,8 +1,13 @@
 package edge
 
 import (
+	"bytes"
 	"encoding/binary"
+	"encoding/gob"
 	"fmt"
+	"hash/crc32"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
@@ -179,14 +184,105 @@ func (r *DiskReader) Read(loc cacheLocation, expectedKey string) (*CacheEntry, e
 		return nil, fmt.Errorf("hash collision at segment %d offset %d: expected %q, got %q", loc.SegmentID, loc.BodyOffset, expectedKey, key)
 	}
 
+	bodyCopy := make([]byte, len(body))
+	copy(bodyCopy, body)
+
 	return &CacheEntry{
 		StatusCode:  statusCode,
 		ContentType: contentType,
 		Headers:     headers,
-		Body:        body,
+		Body:        bodyCopy,
 		CachedAt:    cachedAt,
 		ExpiresAt:   expiresAt,
 	}, nil
+}
+
+// ReadBody returns an io.ReadCloser for the body portion of a cached entry,
+// avoiding a full []byte allocation in user space.
+func (r *DiskReader) ReadBody(loc cacheLocation, expectedKey string) (body io.ReadCloser, bodyLen int64, hdr http.Header, statusCode int, err error) {
+	seg, segErr := r.getSegment(loc.SegmentID)
+	if segErr != nil {
+		err = segErr
+		return
+	}
+
+	f, openErr := os.Open(seg.Path)
+	if openErr != nil {
+		err = fmt.Errorf("open segment %d: %w", loc.SegmentID, openErr)
+		return
+	}
+
+	buf := make([]byte, EntryHeaderSize)
+	if _, rErr := f.ReadAt(buf, int64(loc.BodyOffset)); rErr != nil {
+		f.Close()
+		err = fmt.Errorf("read entry header: %w", rErr)
+		return
+	}
+
+	keyLen := int(binary.BigEndian.Uint16(buf[10:12]))
+	contentTypeLen := int(binary.BigEndian.Uint16(buf[24:26]))
+	headersLen := int(binary.BigEndian.Uint16(buf[26:28]))
+	bLen := int(binary.BigEndian.Uint32(buf[6:10]))
+	totalSize := EntryHeaderSize + keyLen + contentTypeLen + headersLen + bLen
+
+	entry := make([]byte, totalSize)
+	if _, rErr := f.ReadAt(entry, int64(loc.BodyOffset)); rErr != nil {
+		f.Close()
+		err = fmt.Errorf("read entry data: %w", rErr)
+		return
+	}
+
+	expectedCRC := binary.BigEndian.Uint32(entry[0:4])
+	if crc32.ChecksumIEEE(entry[4:]) != expectedCRC {
+		f.Close()
+		err = fmt.Errorf("crc mismatch at segment %d offset %d", loc.SegmentID, loc.BodyOffset)
+		return
+	}
+
+	statusCode = int(binary.BigEndian.Uint16(buf[4:6]))
+	key := string(entry[EntryHeaderSize : EntryHeaderSize+keyLen])
+	if key != expectedKey {
+		f.Close()
+		err = fmt.Errorf("key mismatch at segment %d offset %d: expected %q, got %q", loc.SegmentID, loc.BodyOffset, expectedKey, key)
+		return
+	}
+
+	headersOff := EntryHeaderSize + keyLen + contentTypeLen
+	contentType := string(entry[EntryHeaderSize+keyLen : headersOff])
+	hdrBytes := entry[headersOff : headersOff+headersLen]
+
+	statusCode = int(binary.BigEndian.Uint16(buf[4:6]))
+	hdr = make(http.Header)
+	dec := gob.NewDecoder(bytes.NewReader(hdrBytes))
+	if dErr := dec.Decode(&hdr); dErr != nil {
+		f.Close()
+		err = fmt.Errorf("gob decode headers: %w", dErr)
+		return
+	}
+	hdr.Set("Content-Type", contentType)
+
+	bodyStart := int64(loc.BodyOffset) + int64(EntryHeaderSize+keyLen+contentTypeLen+headersLen)
+	body = &fileSection{
+		f:      f,
+		reader: io.NewSectionReader(f, bodyStart, int64(bLen)),
+	}
+	bodyLen = int64(bLen)
+	return
+}
+
+// fileSection wraps *os.File + io.SectionReader to provide a ReadCloser
+// for a specific byte range of a file.
+type fileSection struct {
+	f      *os.File
+	reader *io.SectionReader
+}
+
+func (fs *fileSection) Read(p []byte) (int, error) {
+	return fs.reader.Read(p)
+}
+
+func (fs *fileSection) Close() error {
+	return fs.f.Close()
 }
 
 func (r *DiskReader) ScanSegment(segmentID uint64) (map[string]*CacheEntry, error) {
