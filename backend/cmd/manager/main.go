@@ -5,9 +5,8 @@ import (
 	"log"
 
 	"veer/config"
+	"veer/manager"
 	"veer/models"
-	"veer/router"
-	"veer/services"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -59,15 +58,15 @@ func main() {
 
 	config.SeedData(db)
 
-	var hcm *services.HealthCheckManager
+	var hcm *manager.HealthCheckManager
 	if cfg.HealthCheck.Enabled {
-		hcm = services.NewHealthCheckManager(db, &cfg.HealthCheck, cfg.Edge.Manager.Secret)
+		hcm = manager.NewHealthCheckManager(db, &cfg.HealthCheck, cfg.Edge.Manager.Secret)
 		hcm.Start()
 		log.Printf("Health checker started (interval=%ds, threshold=%d)",
 			cfg.HealthCheck.IntervalSeconds, cfg.HealthCheck.FailThreshold)
 	}
 
-	r := router.SetupManagerRouter(db, cfg, hcm)
+	r := manager.SetupManagerRouter(db, cfg, hcm)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Server.Host, cfg.Server.Port)
 	log.Printf("Veer manager service starting on %s", addr)

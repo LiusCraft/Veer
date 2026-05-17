@@ -1,4 +1,4 @@
-package handlers
+package manager
 
 import (
 	"math"
@@ -263,9 +263,7 @@ func SetClusterNodes(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		cid := uint(id)
-		// 清除该集群的旧关联
 		db.Where("cluster_id = ?", cid).Delete(&models.NodeCluster{})
-		// 创建新关联
 		for _, nid := range body.NodeIDs {
 			if nid > 0 {
 				db.Create(&models.NodeCluster{NodeID: nid, ClusterID: cid})

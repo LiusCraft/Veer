@@ -5,9 +5,8 @@ import (
 	"log"
 
 	"veer/config"
-	"veer/handlers"
 	"veer/models"
-	"veer/router"
+	"veer/scheduler"
 )
 
 func main() {
@@ -31,9 +30,9 @@ func main() {
 		log.Fatalf("Failed to migrate database: %v", err)
 	}
 
-	cache := handlers.NewRuleCache(db, cfg.Scheduler.RefreshInterval)
+	cache := scheduler.NewRuleCache(db, cfg.Scheduler.RefreshInterval)
 
-	r := router.SetupSchedulerRouter(cache)
+	r := scheduler.SetupSchedulerRouter(cache)
 
 	addr := fmt.Sprintf("%s:%d", cfg.Scheduler.Host, cfg.Scheduler.Port)
 	log.Printf("Veer scheduler service starting on %s", addr)

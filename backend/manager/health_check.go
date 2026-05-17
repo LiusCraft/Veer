@@ -1,18 +1,17 @@
-// Package services provides business logic services for the Veer system.
-package services
+package manager
 
 import (
 	"log"
 	"net/http"
 	"sync"
 	"time"
+
 	"veer/config"
 	"veer/models"
 
 	"gorm.io/gorm"
 )
 
-// HealthCheckManager 管理所有 CDN 节点的自动健康检测
 type HealthCheckManager struct {
 	db         *gorm.DB
 	cfg        *config.HealthCheckConfig
@@ -23,15 +22,6 @@ type HealthCheckManager struct {
 	running    bool
 }
 
-// NewHealthCheckManager 创建新的健康检测管理器
-//
-// 参数:
-//   - db: 数据库连接对象
-//   - cfg: 健康检测配置
-//   - edgeSecret: 边缘节点管理密钥，用于健康探测鉴权
-//
-// 返回:
-//   - *HealthCheckManager: 健康检测管理器实例
 func NewHealthCheckManager(db *gorm.DB, cfg *config.HealthCheckConfig, edgeSecret string) *HealthCheckManager {
 	return &HealthCheckManager{
 		db:         db,
@@ -41,10 +31,6 @@ func NewHealthCheckManager(db *gorm.DB, cfg *config.HealthCheckConfig, edgeSecre
 	}
 }
 
-// Start 启动后台健康检测 Goroutine
-//
-// 如果配置未启用或已处于运行状态，则直接返回。
-// 启动后会立即执行一次全量检测，然后按配置的间隔周期性执行。
 func (m *HealthCheckManager) Start() {
 	if m.cfg == nil || !m.cfg.Enabled {
 		log.Println("Health check is disabled by configuration")
@@ -67,7 +53,6 @@ func (m *HealthCheckManager) Start() {
 
 	log.Printf("Health check started with interval: %s", interval)
 
-	// 首次立即检测一次
 	m.checkAllNodes()
 
 	go func() {
@@ -83,9 +68,6 @@ func (m *HealthCheckManager) Start() {
 	}()
 }
 
-// Stop 停止健康检测
-//
-// 如果健康检测未处于运行状态，则直接返回。
 func (m *HealthCheckManager) Stop() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -97,21 +79,16 @@ func (m *HealthCheckManager) Stop() {
 	log.Println("Health check stopped")
 }
 
-// IsRunning 返回健康检测是否正在运行
 func (m *HealthCheckManager) IsRunning() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.running
 }
 
-// CheckNow 手动触发一次健康检测
 func (m *HealthCheckManager) CheckNow() {
 	m.checkAllNodes()
 }
 
-// checkAllNodes 检测所有 active 和 inactive 状态的节点
-//
-// 并发地对每个节点执行健康检测，等待所有检测完成后返回。
 func (m *HealthCheckManager) checkAllNodes() {
 	var nodes []models.CdnNode
 	if err := m.db.Where("status IN ?", []string{"active", "inactive"}).Find(&nodes).Error; err != nil {
@@ -132,11 +109,6 @@ func (m *HealthCheckManager) checkAllNodes() {
 	m.updateClusterStatus()
 }
 
-// checkNode 检测单个节点的健康状态
-//
-// 执行 HTTP GET 请求到节点的 URL，根据响应结果更新节点状态：
-//   - 请求失败或返回 5xx：增加连续失败计数，达到阈值时标记为 inactive
-//   - 请求成功：重置失败计数，更新延迟，恢复为 active 状态
 func (m *HealthCheckManager) checkNode(node models.CdnNode) {
 	timeout := time.Duration(m.cfg.TimeoutSeconds) * time.Second
 	if timeout < time.Second {
@@ -153,7 +125,6 @@ func (m *HealthCheckManager) checkNode(node models.CdnNode) {
 	healthURL := node.URL + "/health"
 	req, err := http.NewRequest("GET", healthURL, nil)
 	if err != nil {
-		// 请求构建失败，增加连续失败计数
 		m.db.Model(&node).Updates(map[string]interface{}{
 			"consecutive_fails": node.ConsecutiveFails + 1,
 		})
@@ -175,7 +146,6 @@ func (m *HealthCheckManager) checkNode(node models.CdnNode) {
 	latency := int(time.Since(start).Milliseconds())
 
 	if err != nil {
-		// 请求失败，增加连续失败计数
 		m.db.Model(&node).Updates(map[string]interface{}{
 			"consecutive_fails": node.ConsecutiveFails + 1,
 		})
@@ -194,7 +164,6 @@ func (m *HealthCheckManager) checkNode(node models.CdnNode) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 500 {
-		// 5xx 错误也算失败
 		m.db.Model(&node).Updates(map[string]interface{}{
 			"consecutive_fails": node.ConsecutiveFails + 1,
 		})
@@ -209,7 +178,6 @@ func (m *HealthCheckManager) checkNode(node models.CdnNode) {
 		return
 	}
 
-	// 检测成功：重置失败计数，更新延迟，恢复 active 状态
 	updates := map[string]interface{}{
 		"consecutive_fails": 0,
 		"latency":           latency,

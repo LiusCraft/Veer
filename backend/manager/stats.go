@@ -1,18 +1,16 @@
-// Package handlers provides HTTP request handlers for the Veer system.
-package handlers
+package manager
 
 import (
 	"net/http"
 	"strconv"
 	"time"
+
 	"veer/models"
-	"veer/services"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
-// OverviewStats represents the summary statistics for the dashboard.
 type OverviewStats struct {
 	TotalRedirects    int64  `json:"total_redirects"`
 	ActiveNodes       int64  `json:"active_nodes"`
@@ -21,31 +19,24 @@ type OverviewStats struct {
 	HealthCheckStatus string `json:"health_check_status"`
 }
 
-// TrafficPoint represents a single day's traffic data.
 type TrafficPoint struct {
 	Date  string `json:"date"`
 	Count int64  `json:"count"`
 }
 
-// GetOverview handles GET /api/stats/overview — returns dashboard summary stats.
-func GetOverview(db *gorm.DB, hcm *services.HealthCheckManager) gin.HandlerFunc {
+func GetOverview(db *gorm.DB, hcm *HealthCheckManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var stats OverviewStats
 
-		// Total redirects = sum of all hit counts
 		db.Model(&models.RedirectRule{}).Select("COALESCE(SUM(hit_count), 0)").Scan(&stats.TotalRedirects)
 
-		// Active nodes count
 		db.Model(&models.CdnNode{}).Where("status = ?", "active").Count(&stats.ActiveNodes)
 
-		// Total rules count
 		db.Model(&models.RedirectRule{}).Count(&stats.TotalRules)
 
-		// Today's requests from access_log
 		today := time.Now().Truncate(24 * time.Hour)
 		db.Model(&models.AccessLog{}).Where("created_at >= ?", today).Count(&stats.TodayRequests)
 
-		// 健康检测状态
 		if hcm != nil && hcm.IsRunning() {
 			stats.HealthCheckStatus = "running"
 		} else {
@@ -56,7 +47,6 @@ func GetOverview(db *gorm.DB, hcm *services.HealthCheckManager) gin.HandlerFunc 
 	}
 }
 
-// GetLogs handles GET /api/stats/logs — returns paginated access logs.
 func GetLogs(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		pageStr := c.DefaultQuery("page", "1")
@@ -101,7 +91,6 @@ func GetLogs(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-// GetTraffic handles GET /api/stats/traffic — returns last 7 days daily traffic.
 func GetTraffic(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		now := time.Now()

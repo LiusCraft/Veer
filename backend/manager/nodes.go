@@ -1,5 +1,4 @@
-// Package handlers provides HTTP request handlers for the Veer system.
-package handlers
+package manager
 
 import (
 	"net/http"
@@ -14,17 +13,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// validStatuses 有效的节点状态列表
 var validStatuses = []string{"active", "inactive"}
 
-// validateName 验证节点名称
-//
-// 参数:
-//   - name: 待验证的名称
-//
-// 返回:
-//   - bool: 是否有效
-//   - string: 错误信息（如果无效）
 func validateName(name string) (bool, string) {
 	if name == "" {
 		return false, "name 不能为空"
@@ -35,14 +25,6 @@ func validateName(name string) (bool, string) {
 	return true, ""
 }
 
-// validateURL 验证节点 URL 格式
-//
-// 参数:
-//   - url: 待验证的 URL
-//
-// 返回:
-//   - bool: 是否有效
-//   - string: 错误信息（如果无效）
 func validateURL(url string) (bool, string) {
 	if url == "" {
 		return false, "url 不能为空"
@@ -56,14 +38,6 @@ func validateURL(url string) (bool, string) {
 	return true, ""
 }
 
-// validateWeight 验证节点权重
-//
-// 参数:
-//   - weight: 待验证的权重值
-//
-// 返回:
-//   - bool: 是否有效
-//   - string: 错误信息（如果无效）
 func validateWeight(weight int) (bool, string) {
 	if weight < 1 || weight > 100 {
 		return false, "weight 必须为 1-100 之间的整数"
@@ -71,17 +45,9 @@ func validateWeight(weight int) (bool, string) {
 	return true, ""
 }
 
-// validateNodeStatus 验证节点状态
-//
-// 参数:
-//   - status: 待验证的状态值
-//
-// 返回:
-//   - bool: 是否有效
-//   - string: 错误信息（如果无效）
 func validateNodeStatus(status string) (bool, string) {
 	if status == "" {
-		return true, "" // 允许为空，使用默认值
+		return true, ""
 	}
 	for _, valid := range validStatuses {
 		if status == valid {
@@ -91,7 +57,6 @@ func validateNodeStatus(status string) (bool, string) {
 	return false, "status 必须是 active 或 inactive"
 }
 
-// ListNodes 处理 GET /api/nodes — 列出所有 CDN 节点
 func ListNodes(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		query := db.Model(&models.CdnNode{})
@@ -124,7 +89,6 @@ func ListNodes(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// 为每个节点查询关联集群ID列表
 		nodeIDs := make([]uint, len(nodes))
 		for i, n := range nodes {
 			nodeIDs[i] = n.ID
@@ -155,7 +119,6 @@ func ListNodes(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-// CreateNode 处理 POST /api/nodes — 创建新的 CDN 节点
 func CreateNode(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
@@ -178,32 +141,28 @@ func CreateNode(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// 手动校验 name
 		if ok, errMsg := validateName(body.Name); !ok {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 			return
 		}
 
-		// 手动校验 url
 		if ok, errMsg := validateURL(body.URL); !ok {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 			return
 		}
 
-		// 手动校验 weight
 		weight := body.Weight
 		if weight == 0 {
-			weight = 1 // 默认权重为 1
+			weight = 1
 		}
 		if ok, errMsg := validateWeight(weight); !ok {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
 			return
 		}
 
-		// 校验 status
 		status := body.Status
 		if status == "" {
-			status = "active" // 默认状态为 active
+			status = "active"
 		}
 		if ok, errMsg := validateNodeStatus(status); !ok {
 			c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
@@ -229,7 +188,6 @@ func CreateNode(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// 创建集群关联
 		for _, cid := range body.ClusterIDs {
 			if cid > 0 {
 				db.Create(&models.NodeCluster{NodeID: node.ID, ClusterID: cid})
@@ -240,7 +198,6 @@ func CreateNode(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-// UpdateNode 处理 PUT /api/nodes/:id — 更新 CDN 节点
 func UpdateNode(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id, err := strconv.ParseUint(c.Param("id"), 10, 64)
@@ -275,7 +232,6 @@ func UpdateNode(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// 校验 name（如果提供了）
 		if body.Name != "" {
 			if ok, errMsg := validateName(body.Name); !ok {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
@@ -284,7 +240,6 @@ func UpdateNode(db *gorm.DB) gin.HandlerFunc {
 			node.Name = body.Name
 		}
 
-		// 校验 url（如果提供了）
 		if body.URL != "" {
 			if ok, errMsg := validateURL(body.URL); !ok {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
@@ -293,7 +248,6 @@ func UpdateNode(db *gorm.DB) gin.HandlerFunc {
 			node.URL = body.URL
 		}
 
-		// 校验 weight（如果提供了）
 		if body.Weight != 0 {
 			if ok, errMsg := validateWeight(body.Weight); !ok {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
@@ -302,7 +256,6 @@ func UpdateNode(db *gorm.DB) gin.HandlerFunc {
 			node.Weight = body.Weight
 		}
 
-		// 校验 status（如果提供了）
 		if body.Status != "" {
 			if ok, errMsg := validateNodeStatus(body.Status); !ok {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
@@ -338,7 +291,6 @@ func UpdateNode(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// 更新集群关联：清空后重建
 		if body.ClusterIDs != nil {
 			db.Where("node_id = ?", id).Delete(&models.NodeCluster{})
 			for _, cid := range body.ClusterIDs {
@@ -352,7 +304,6 @@ func UpdateNode(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-// DeleteNode 处理 DELETE /api/nodes/:id — 删除 CDN 节点
 func DeleteNode(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id, err := strconv.ParseUint(c.Param("id"), 10, 64)
@@ -370,7 +321,6 @@ func DeleteNode(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-// BatchDeleteNodes 处理 DELETE /api/nodes/batch — 批量删除 CDN 节点
 func BatchDeleteNodes(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
@@ -394,7 +344,6 @@ func BatchDeleteNodes(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-// BatchUpdateNodeStatus 处理 PUT /api/nodes/batch/status — 批量更新节点状态
 func BatchUpdateNodeStatus(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
@@ -422,7 +371,6 @@ func BatchUpdateNodeStatus(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-// TestNode 处理 POST /api/nodes/:id/test — 对节点执行 HTTP 健康检查
 func TestNode(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id, err := strconv.ParseUint(c.Param("id"), 10, 64)
@@ -437,10 +385,8 @@ func TestNode(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
-		// 使用 httptrace 测量 HTTP 延迟
 		latencyMs := measureLatency(node.URL)
 
-		// 更新数据库中的延迟值
 		db.Model(&node).UpdateColumn("latency", latencyMs)
 		node.Latency = latencyMs
 
@@ -452,7 +398,6 @@ func TestNode(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-// measureLatency 对指定 URL 执行 HTTP GET 并返回延迟（毫秒）
 func measureLatency(url string) int {
 	var start time.Time
 	var latency time.Duration
@@ -483,7 +428,6 @@ func measureLatency(url string) int {
 	return int(latency.Milliseconds())
 }
 
-// GetNode 处理 GET /api/nodes/:id — 获取单个 CDN 节点
 func GetNode(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		id, err := strconv.ParseUint(c.Param("id"), 10, 64)
@@ -500,7 +444,6 @@ func GetNode(db *gorm.DB) gin.HandlerFunc {
 	}
 }
 
-// newRequestWithTrace 创建带有连接时间追踪的 HTTP 请求
 func newRequestWithTrace(url string, start *time.Time, latency *time.Duration) (*http.Request, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
