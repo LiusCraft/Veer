@@ -7,6 +7,8 @@ type CdnNode struct {
 	Name string `json:"name" binding:"required"`
 	URL  string `json:"url" binding:"required"`
 
+	InternalURL string `json:"internal_url" gorm:"size:512;default:''"`
+
 	IP             string `json:"ip" gorm:"size:45"`
 	Region         string `json:"region" gorm:"size:32"`
 	ISP            string `json:"isp" gorm:"size:32"`

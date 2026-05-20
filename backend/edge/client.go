@@ -12,10 +12,11 @@ import (
 )
 
 type registerRequest struct {
-	Name      string `json:"name"`
-	Region    string `json:"region"`
-	PublicURL string `json:"public_url"`
-	Secret    string `json:"secret"`
+	Name        string `json:"name"`
+	Region      string `json:"region"`
+	PublicURL   string `json:"public_url"`
+	InternalURL string `json:"internal_url,omitempty"`
+	Secret      string `json:"secret"`
 }
 
 type registerResponseData struct {
@@ -104,12 +105,13 @@ func (mc *managerClient) sendHeartbeat(m systemMetrics) error {
 	return nil
 }
 
-func (mc *managerClient) register(name, region, publicURL string) (*registerResponseData, error) {
+func (mc *managerClient) register(name, region, publicURL, internalURL string) (*registerResponseData, error) {
 	reqBody := registerRequest{
-		Name:      name,
-		Region:    region,
-		PublicURL: publicURL,
-		Secret:    mc.secret,
+		Name:        name,
+		Region:      region,
+		PublicURL:   publicURL,
+		InternalURL: internalURL,
+		Secret:      mc.secret,
 	}
 
 	data, err := json.Marshal(reqBody)
@@ -175,7 +177,7 @@ func RegisterWithManager(cfg *config.EdgeConfig) error {
 	log.Printf("[edge] registering with manager at %s ...", cfg.Manager.URL)
 
 	mc := newManagerClient(cfg.Manager)
-	resp, err := mc.register(cfg.Name, cfg.Region, cfg.PublicURL)
+	resp, err := mc.register(cfg.Name, cfg.Region, cfg.PublicURL, cfg.InternalURL)
 	if err != nil {
 		return fmt.Errorf("registration failed: %w", err)
 	}

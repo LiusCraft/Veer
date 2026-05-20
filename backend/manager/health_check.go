@@ -122,7 +122,11 @@ func (m *HealthCheckManager) checkNode(node models.CdnNode) {
 		},
 	}
 
-	healthURL := node.URL + "/health"
+	healthURL := node.URL
+	if node.InternalURL != "" {
+		healthURL = node.InternalURL
+	}
+	healthURL += "/health"
 	req, err := http.NewRequest("GET", healthURL, nil)
 	if err != nil {
 		m.db.Model(&node).Updates(map[string]interface{}{

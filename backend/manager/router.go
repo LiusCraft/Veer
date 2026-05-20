@@ -17,9 +17,6 @@ func SetupManagerRouter(db *gorm.DB, cfg *config.ManagerConfig, hcm *HealthCheck
 		r.Use(middleware.RateLimitMiddlewareWithConfig(cfg.RateLimit.RequestsPerMinute, cfg.RateLimit.Whitelist))
 	}
 
-	r.StaticFS("/admin", StaticFiles())
-	r.GET("/", AdminRedirect)
-
 	api := r.Group("/api")
 	api.Use(middleware.JWTAuthMiddleware(cfg.JWT.Secret))
 	{

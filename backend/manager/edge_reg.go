@@ -19,10 +19,11 @@ type EdgeRule struct {
 }
 
 type EdgeRegisterRequest struct {
-	Name      string `json:"name" binding:"required"`
-	Region    string `json:"region"`
-	PublicURL string `json:"public_url" binding:"required"`
-	Secret    string `json:"secret" binding:"required"`
+	Name        string `json:"name" binding:"required"`
+	Region      string `json:"region"`
+	PublicURL   string `json:"public_url" binding:"required"`
+	InternalURL string `json:"internal_url"`
+	Secret      string `json:"secret" binding:"required"`
 }
 
 type EdgeRegisterResponse struct {
@@ -62,6 +63,7 @@ func RegisterEdgeHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFunc
 				node = models.CdnNode{
 					Name:          req.Name,
 					URL:           req.PublicURL,
+					InternalURL:   req.InternalURL,
 					Region:        req.Region,
 					Status:        "active",
 					Weight:        1,
@@ -78,9 +80,10 @@ func RegisterEdgeHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFunc
 			}
 		} else {
 			updates := map[string]interface{}{
-				"url":    req.PublicURL,
-				"region": req.Region,
-				"status": "active",
+				"url":          req.PublicURL,
+				"internal_url": req.InternalURL,
+				"region":       req.Region,
+				"status":       "active",
 			}
 			if err := db.Model(&node).Updates(updates).Error; err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update node"})

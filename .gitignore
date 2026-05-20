@@ -1,5 +1,7 @@
 .DS_Store
 *.db
+*.db-shm
+*.db-wal
 
 # Frontend
 frontend/node_modules/
@@ -7,6 +9,12 @@ frontend/dist/
 
 # Backend build
 backend/dist/
+
+# Go binaries
+backend/edge/edge
+backend/scheduler/scheduler
+backend/veer-manager
+backend/veer
 
 # Runtime data
 backend/data/

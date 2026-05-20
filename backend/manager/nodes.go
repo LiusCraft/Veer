@@ -2,7 +2,6 @@ package manager
 
 import (
 	"net/http"
-	"net/http/httptrace"
 	"strconv"
 	"strings"
 	"time"
@@ -386,6 +385,9 @@ func TestNode(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		latencyMs := measureLatency(node.URL)
+		if node.InternalURL != "" {
+			latencyMs = measureLatency(node.InternalURL)
+		}
 
 		db.Model(&node).UpdateColumn("latency", latencyMs)
 		node.Latency = latencyMs
@@ -399,10 +401,7 @@ func TestNode(db *gorm.DB) gin.HandlerFunc {
 }
 
 func measureLatency(url string) int {
-	var start time.Time
-	var latency time.Duration
-
-	req, err := newRequestWithTrace(url, &start, &latency)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return -1
 	}
@@ -414,18 +413,18 @@ func measureLatency(url string) int {
 		},
 	}
 
-	start = time.Now()
+	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
 		return -1
 	}
 	defer resp.Body.Close()
 
-	if latency == 0 {
-		latency = time.Since(start)
+	latencyMs := int(time.Since(start).Milliseconds())
+	if latencyMs < 1 {
+		latencyMs = 1
 	}
-
-	return int(latency.Milliseconds())
+	return latencyMs
 }
 
 func GetNode(db *gorm.DB) gin.HandlerFunc {
@@ -442,21 +441,4 @@ func GetNode(db *gorm.DB) gin.HandlerFunc {
 		}
 		c.JSON(http.StatusOK, gin.H{"data": node})
 	}
-}
-
-func newRequestWithTrace(url string, start *time.Time, latency *time.Duration) (*http.Request, error) {
-	req, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	trace := &httptrace.ClientTrace{
-		GotFirstResponseByte: func() {
-			if !start.IsZero() {
-				*latency = time.Since(*start)
-			}
-		},
-	}
-	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
-	return req, nil
 }

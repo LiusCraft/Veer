@@ -20,8 +20,9 @@ type DatabaseConfig struct {
 }
 
 // InitDB initializes and returns a SQLite database connection with the specified database path.
+// Uses WAL mode and busy timeout for concurrent access from manager + scheduler.
 func InitDB(dbPath string) (*gorm.DB, error) {
-	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{
+	db, err := gorm.Open(sqlite.Open(dbPath+"?_journal_mode=WAL&_busy_timeout=5000"), &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Info),
 	})
 	if err != nil {

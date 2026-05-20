@@ -51,6 +51,7 @@ type EdgeConfig struct {
 	Name          string            `mapstructure:"name" default:"edge-1"`
 	Region        string            `mapstructure:"region" default:"default"`
 	PublicURL     string            `mapstructure:"public_url" default:"http://localhost:8082"`
+	InternalURL   string            `mapstructure:"internal_url" default:""`
 	Manager       EdgeManagerConfig `mapstructure:"manager"`
 	OriginBaseURL string            `mapstructure:"origin_base_url" default:"http://origin:80"`
 	Cache         EdgeCacheConfig   `mapstructure:"cache"`
@@ -72,6 +73,7 @@ func LoadEdgeConfig() (*EdgeConfig, error) {
 		"name", "CDNC_EDGE_NAME",
 		"region", "CDNC_EDGE_REGION",
 		"public_url", "CDNC_EDGE_PUBLIC_URL",
+		"internal_url", "CDNC_EDGE_INTERNAL_URL",
 		"manager.url", "CDNC_EDGE_MANAGER_URL",
 		"manager.secret", "CDNC_EDGE_MANAGER_SECRET",
 		"origin_base_url", "CDNC_EDGE_ORIGIN_BASE_URL",

@@ -205,9 +205,9 @@ func RateLimitMiddleware(rps float64, burst int, whitelist []string) gin.Handler
 //   - gin.HandlerFunc: Gin 中间件处理函数
 func RateLimitMiddlewareWithConfig(requestsPerMinute int, whitelist []string) gin.HandlerFunc {
 	rps := float64(requestsPerMinute) / 60.0
-	burst := requestsPerMinute / 10
-	if burst < 1 {
-		burst = 1
+	burst := requestsPerMinute / 2
+	if burst < 10 {
+		burst = 10
 	}
 	return RateLimitMiddleware(rps, burst, whitelist)
 }
