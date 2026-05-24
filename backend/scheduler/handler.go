@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -179,6 +180,7 @@ func buildClientMatchInfo(remoteAddr, reqRegion, reqISP string) ClientMatchInfo 
 	}
 
 	if regionFound && ispFound {
+		log.Printf("[scheduler] client match from headers only: region=%q isp=%q", reqRegion, reqISP)
 		return info
 	}
 
@@ -191,6 +193,9 @@ func buildClientMatchInfo(remoteAddr, reqRegion, reqISP string) ClientMatchInfo 
 		info.ISP = isp
 	}
 	info.MatchedByGeoIP = !regionFound || !ispFound
+
+	log.Printf("[scheduler] client match: headers(region=%q isp=%q) geoip(province=%q region=%q isp=%q) matchedByGeoIP=%v",
+		reqRegion, reqISP, province, region, isp, info.MatchedByGeoIP)
 
 	return info
 }

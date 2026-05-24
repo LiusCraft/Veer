@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"fmt"
+	"log"
 
 	"veer/config"
 
@@ -13,8 +14,10 @@ func getSettlementCostFactor(clientISP, nodeISP string) float64 {
 		return 1.0
 	}
 
-	v := viper.GetFloat64(fmt.Sprintf("scheduling.cost.settlement.%s_%s", clientISP, nodeISP))
+	key := fmt.Sprintf("scheduling.cost.settlement.%s_%s", clientISP, nodeISP)
+	v := viper.GetFloat64(key)
 	if v > 0 {
+		log.Printf("[scheduler] cost settlement override: %s=%v", key, v)
 		return v
 	}
 

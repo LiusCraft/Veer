@@ -63,6 +63,7 @@ func probeNode(nodeID uint, baseURL string) {
 	start := time.Now()
 	resp, err := client.Get(healthURL)
 	if err != nil {
+		log.Printf("[rtt] probe failed: node=%d url=%s err=%v", nodeID, healthURL, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -72,4 +73,5 @@ func probeNode(nodeID uint, baseURL string) {
 		rtt = 1
 	}
 	setNodeRTT(nodeID, rtt)
+	log.Printf("[rtt] probe done: node=%d rtt=%dms", nodeID, rtt)
 }

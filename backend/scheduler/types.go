@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"log"
 	"sort"
 	"sync"
 	"time"
@@ -72,6 +73,7 @@ func refreshNodePerfStats(cache *RuleCache) {
 		}
 	}
 
+	nodesUpdated := 0
 	for nodeID, ns := range nodeMap {
 		if len(ns.vals) == 0 {
 			continue
@@ -103,5 +105,7 @@ func refreshNodePerfStats(cache *RuleCache) {
 		stats.P99ResponseTimeMs = float64(sorted[p99Idx])
 
 		setNodePerfStats(nodeID, stats)
+		nodesUpdated++
 	}
+	log.Printf("[scheduler] perf stats refreshed: %d nodes with data in last 5min", nodesUpdated)
 }

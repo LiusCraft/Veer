@@ -164,6 +164,9 @@ func (c *RuleCache) selectNodeForRule(ruleID uint, ruleStrategy string, client C
 
 	var allCandidates []nodeCandidate
 
+	log.Printf("[scheduler] selecting node for rule=%d strategy=%s client=(province=%q region=%q isp=%q geoip=%v)",
+		ruleID, ruleStrategy, client.Province, client.Region, client.ISP, client.MatchedByGeoIP)
+
 	for _, rc := range c.ruleClusters {
 		if rc.RuleID != ruleID {
 			continue
@@ -208,9 +211,13 @@ func (c *RuleCache) selectNodeForRule(ruleID uint, ruleStrategy string, client C
 				costFactor = 1.0
 			}
 
+			effectiveScore := ms / costFactor
+			log.Printf("[scheduler]   candidate node=%d (%s) matchScore=%.0f costFactor=%.2f(settle=%.2f bw=%.2f dist=%.2f) effective=%.1f",
+				n.ID, n.Name, ms, costFactor, settlementCost, bwPrice, distanceCost, effectiveScore)
+
 			allCandidates = append(allCandidates, nodeCandidate{
 				Node:           n,
-				EffectiveScore: ms / costFactor,
+				EffectiveScore: effectiveScore,
 				ClusterID:      rc.ClusterID,
 				Strategy:       strategy,
 			})
@@ -218,6 +225,7 @@ func (c *RuleCache) selectNodeForRule(ruleID uint, ruleStrategy string, client C
 	}
 
 	if len(allCandidates) == 0 {
+		log.Printf("[scheduler] no candidates for rule=%d", ruleID)
 		return models.CdnNode{}, false
 	}
 
@@ -226,6 +234,7 @@ func (c *RuleCache) selectNodeForRule(ruleID uint, ruleStrategy string, client C
 
 	nodes := selectByScoreLevels(allCandidates)
 	if len(nodes) == 0 {
+		log.Printf("[scheduler] no nodes after score levels for rule=%d", ruleID)
 		return models.CdnNode{}, false
 	}
 
@@ -237,6 +246,10 @@ func (c *RuleCache) selectNodeForRule(ruleID uint, ruleStrategy string, client C
 		}
 	}
 
+	selected := selectNode(nodes, strategy, ruleID)
+	log.Printf("[scheduler] selected node=%d (%s) via strategy=%s from %d candidates",
+		selected.ID, selected.Name, strategy, len(allCandidates))
+
 	return selectNode(nodes, strategy, ruleID), true
 }
 
@@ -246,12 +259,16 @@ func applyColdStartProtection(candidates []nodeCandidate) {
 	for i := range candidates {
 		n := &candidates[i].Node
 		if !n.CreatedAt.IsZero() && now.Sub(n.CreatedAt) < warmupPeriod {
-			if n.Weight > 1 {
-				n.Weight = max(1, n.Weight/10)
-			}
+			oldW := n.Weight
+			n.Weight = max(1, n.Weight/10)
+			log.Printf("[scheduler] cold start: node=%d (%s) weight %d->%d (age=%v)",
+				n.ID, n.Name, oldW, n.Weight, now.Sub(n.CreatedAt).Round(time.Second))
 		}
 		if n.LastHeartbeat.IsZero() || now.Sub(n.LastHeartbeat) > 5*time.Minute {
+			oldW := n.Weight
 			n.Weight = max(1, n.Weight/5)
+			log.Printf("[scheduler] stale heartbeat: node=%d (%s) weight %d->%d (last_hb=%v)",
+				n.ID, n.Name, oldW, n.Weight, n.LastHeartbeat)
 		}
 	}
 }
@@ -259,6 +276,10 @@ func applyColdStartProtection(candidates []nodeCandidate) {
 func applyRTTScore(candidates []nodeCandidate) {
 	for i := range candidates {
 		if rtt := GetNodeRTT(candidates[i].Node.ID); rtt > 0 {
+			if candidates[i].Node.Latency != rtt {
+				log.Printf("[scheduler] RTT override: node=%d latency %d->%dms",
+					candidates[i].Node.ID, candidates[i].Node.Latency, rtt)
+			}
 			candidates[i].Node.Latency = rtt
 		}
 	}
@@ -285,12 +306,14 @@ func selectByScoreLevels(candidates []nodeCandidate) []models.CdnNode {
 			}
 		}
 		if len(filtered) > 0 {
+			log.Printf("[scheduler] score level %.0f: %d/%d candidates", level.threshold, len(filtered), len(candidates))
 			nodes := make([]models.CdnNode, len(filtered))
 			for i, c := range filtered {
 				nodes[i] = c.Node
 			}
 			return nodes
 		}
+		log.Printf("[scheduler] score level %.0f: no candidates, degrading", level.threshold)
 	}
 
 	nodes := make([]models.CdnNode, len(candidates))
