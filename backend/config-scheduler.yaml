@@ -9,3 +9,16 @@ database:
   path: "./veer.db"
 
 refresh_interval: 10
+
+# GeoIP 配置（IP 地理定位）
+geoip:
+  enabled: false
+  db_path: "./data/ip2region.xdb"
+
+# 调度成本配置
+scheduling:
+  cost:
+    distance:
+      same_province: 1.0
+      same_region: 1.2
+      cross_region: 1.5

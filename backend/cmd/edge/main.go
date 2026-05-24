@@ -28,14 +28,16 @@ func main() {
 	if cfg.Manager.URL != "" {
 		if err := edge.RegisterWithManager(cfg); err != nil {
 			log.Printf("[edge] WARNING: manager registration failed (running with local config): %v", err)
-		} else {
-			go edge.StartHeartbeatLoop(cfg)
 		}
 	} else {
 		log.Println("[edge] no manager URL configured, using local config")
 	}
 
 	server := edge.NewEdgeServer(cfg)
+
+	if cfg.Manager.URL != "" && cfg.NodeID != 0 {
+		go edge.StartHeartbeatLoop(server)
+	}
 
 	if cfg.Manager.URL != "" {
 		if err := edge.SyncRules(server); err != nil {

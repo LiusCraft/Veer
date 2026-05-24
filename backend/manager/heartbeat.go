@@ -33,6 +33,10 @@ func NodeHeartbeatHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFun
 			LoadAvg          float64 `json:"load_avg"`
 			RequestCount1m   int64   `json:"request_count_1m"`
 			BandwidthBytes1m int64   `json:"bandwidth_bytes_1m"`
+			TxBytes1m        int64   `json:"tx_bytes_1m"`
+			RxBytes1m        int64   `json:"rx_bytes_1m"`
+			CacheHits1m      int64   `json:"cache_hits_1m"`
+			CacheMisses1m    int64   `json:"cache_misses_1m"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -47,11 +51,18 @@ func NodeHeartbeatHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFun
 		}
 
 		now := time.Now()
+		cacheHitRate := 0.0
+		if body.CacheHits1m+body.CacheMisses1m > 0 {
+			cacheHitRate = float64(body.CacheHits1m) / float64(body.CacheHits1m+body.CacheMisses1m) * 100
+		}
 		updates := map[string]interface{}{
 			"cpu_usage":      body.CPUUsage,
 			"mem_usage":      body.MemUsage,
 			"disk_usage":     body.DiskUsage,
 			"load_avg":       body.LoadAvg,
+			"tx_bytes1m":     body.TxBytes1m,
+			"rx_bytes1m":     body.RxBytes1m,
+			"cache_hit_rate": cacheHitRate,
 			"last_heartbeat": now,
 		}
 

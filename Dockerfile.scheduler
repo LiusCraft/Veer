@@ -1,4 +1,4 @@
-FROM golang:1.23-alpine AS builder
+FROM golang:1.26-alpine AS builder
 RUN apk add --no-cache gcc musl-dev
 WORKDIR /app
 COPY backend/go.mod backend/go.sum ./
@@ -7,9 +7,12 @@ COPY backend/ ./
 RUN CGO_ENABLED=1 go build -ldflags="-s -w" -o scheduler ./cmd/scheduler
 
 FROM alpine:3.19
-RUN apk --no-cache add ca-certificates sqlite-libs
+RUN apk --no-cache add ca-certificates sqlite-libs wget
 WORKDIR /app
 COPY --from=builder /app/scheduler .
 COPY backend/config-scheduler.yaml ./config-scheduler.yaml
+RUN mkdir -p /app/data && \
+    wget -q https://gitcode.com/ip2region/ip2region/raw/master/data/ip2region.xdb \
+    -O /app/data/ip2region.xdb
 EXPOSE 8081
 CMD ["./scheduler"]

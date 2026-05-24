@@ -3,11 +3,11 @@ package scheduler
 import (
 	"log"
 	"math/rand"
-	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"veer/geoip"
 	"veer/models"
 
 	"github.com/spf13/viper"
@@ -35,13 +35,6 @@ func getRoundRobinCounter(ruleID uint) *int64 {
 	var zero int64
 	roundRobinCounters[ruleID] = &zero
 	return &zero
-}
-
-type clusterSelectInfo struct {
-	clusterID uint
-	weight    int
-	priority  int
-	strategy  string
 }
 
 type RuleCache struct {
@@ -141,6 +134,8 @@ func (c *RuleCache) refresh() {
 	c.clusters = clusterMap
 	c.mu.Unlock()
 
+	refreshNodePerfStats(c)
+
 	log.Printf("[scheduler] rule cache refreshed: %d rules, %d nodes, %d clusters", len(rules), len(allNodes), len(clusterIDs))
 }
 
@@ -163,153 +158,146 @@ func (c *RuleCache) GetNodes(ids []uint) []models.CdnNode {
 	return result
 }
 
-func (c *RuleCache) getNodesForRule(ruleID uint) []models.CdnNode {
+func (c *RuleCache) selectNodeForRule(ruleID uint, ruleStrategy string, client ClientMatchInfo) (models.CdnNode, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	var result []models.CdnNode
+
+	var allCandidates []nodeCandidate
+
 	for _, rc := range c.ruleClusters {
-		if rc.RuleID == ruleID {
-			if nodes, ok := c.clusterNodes[rc.ClusterID]; ok {
-				result = append(result, nodes...)
-			}
+		if rc.RuleID != ruleID {
+			continue
 		}
-	}
-	return result
-}
+		cl, ok := c.clusters[rc.ClusterID]
+		if !ok {
+			continue
+		}
+		nodes, ok := c.clusterNodes[rc.ClusterID]
+		if !ok || len(nodes) == 0 {
+			continue
+		}
+		strategy := ruleStrategy
+		if cl.Strategy != "" {
+			strategy = cl.Strategy
+		}
+		bwPrice := cl.BandwidthPrice
+		if bwPrice <= 0 {
+			bwPrice = 1.0
+		}
+		for _, n := range nodes {
+			nodeProvince := n.Province
+			if nodeProvince == "" {
+				nodeProvince = n.Region
+			}
+			nodeRegion := geoip.ProvinceToRegionName(nodeProvince)
+			if nodeRegion == "" {
+				nodeRegion = n.Region
+			}
 
-func (c *RuleCache) selectNodeForRule(ruleID uint, ruleStrategy, region, isp string) (models.CdnNode, bool) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+			ms := geoip.MatchScore(client.Province, client.Region, client.ISP, nodeProvince, nodeRegion, n.ISP, n.ISPList)
 
-	var infos []clusterSelectInfo
-	for _, rc := range c.ruleClusters {
-		if rc.RuleID == ruleID {
-			cl, ok := c.clusters[rc.ClusterID]
-			if !ok {
-				continue
+			sameProvince := client.Province != "" && client.Province == nodeProvince
+			sameRegion := client.Region != "" && nodeRegion != "" && client.Region == nodeRegion && !sameProvince
+
+			targetISP := getSettlementTargetISP(n.ISP, n.ISPList)
+			settlementCost := getSettlementCostFactor(client.ISP, targetISP)
+			distanceCost := getDistanceCost(sameProvince, sameRegion)
+
+			costFactor := settlementCost * bwPrice * distanceCost
+			if costFactor < 1.0 {
+				costFactor = 1.0
 			}
-			if !clusterMatches(cl, region, isp) {
-				continue
-			}
-			strategy := ruleStrategy
-			if cl.Strategy != "" {
-				strategy = cl.Strategy
-			}
-			infos = append(infos, clusterSelectInfo{
-				clusterID: rc.ClusterID,
-				weight:    rc.Weight,
-				priority:  rc.Priority,
-				strategy:  strategy,
+
+			allCandidates = append(allCandidates, nodeCandidate{
+				Node:           n,
+				EffectiveScore: ms / costFactor,
+				ClusterID:      rc.ClusterID,
+				Strategy:       strategy,
 			})
 		}
 	}
 
-	if len(infos) == 0 {
+	if len(allCandidates) == 0 {
 		return models.CdnNode{}, false
 	}
 
-	sort.Slice(infos, func(i, j int) bool {
-		if infos[i].priority != infos[j].priority {
-			return infos[i].priority < infos[j].priority
-		}
-		return infos[i].clusterID < infos[j].clusterID
-	})
+	applyColdStartProtection(allCandidates)
+	applyRTTScore(allCandidates)
 
-	currentPri := infos[0].priority
-	start := 0
-	for i := 0; i <= len(infos); i++ {
-		if i == len(infos) || infos[i].priority != currentPri {
-			level := infos[start:i]
-			var candidates []clusterSelectInfo
-			for _, info := range level {
-				nodes, ok := c.clusterNodes[info.clusterID]
-				if !ok {
-					continue
-				}
-				filtered := filterNodesByRegionISP(nodes, region, isp)
-				if len(filtered) > 0 {
-					candidates = append(candidates, info)
-				}
-			}
-			if len(candidates) > 0 {
-				selected := selectClusterByWeight(candidates)
-				nodes := c.clusterNodes[selected.clusterID]
-				filtered := filterNodesByRegionISP(nodes, region, isp)
-				return selectNode(filtered, selected.strategy, ruleID), true
-			}
-			if i < len(infos) {
-				currentPri = infos[i].priority
-				start = i
-			}
-		}
+	nodes := selectByScoreLevels(allCandidates)
+	if len(nodes) == 0 {
+		return models.CdnNode{}, false
 	}
 
-	return models.CdnNode{}, false
-}
-
-func clusterMatches(cl models.Cluster, region, isp string) bool {
-	if region == "" && isp == "" {
-		return true
-	}
-	regionMatch := region == ""
-	for _, r := range cl.Region {
-		if r == region || r == "其他" {
-			regionMatch = true
+	strategy := allCandidates[0].Strategy
+	for _, s := range allCandidates {
+		if s.EffectiveScore >= 80 {
+			strategy = s.Strategy
 			break
 		}
 	}
-	ispMatch := isp == ""
-	for _, i := range cl.ISP {
-		if i == isp || i == "其他" {
-			ispMatch = true
-			break
-		}
-	}
-	return regionMatch && ispMatch
+
+	return selectNode(nodes, strategy, ruleID), true
 }
 
-func filterNodesByRegionISP(nodes []models.CdnNode, region, isp string) []models.CdnNode {
-	if region == "" && isp == "" {
-		return nodes
-	}
-	var result []models.CdnNode
-	for _, n := range nodes {
-		if region != "" && n.Region != region && n.Region != "其他" {
-			continue
+func applyColdStartProtection(candidates []nodeCandidate) {
+	warmupPeriod := 5 * time.Minute
+	now := time.Now()
+	for i := range candidates {
+		n := &candidates[i].Node
+		if !n.CreatedAt.IsZero() && now.Sub(n.CreatedAt) < warmupPeriod {
+			if n.Weight > 1 {
+				n.Weight = max(1, n.Weight/10)
+			}
 		}
-		if isp != "" && n.ISP != isp && n.ISP != "其他" {
-			continue
+		if n.LastHeartbeat.IsZero() || now.Sub(n.LastHeartbeat) > 5*time.Minute {
+			n.Weight = max(1, n.Weight/5)
 		}
-		result = append(result, n)
 	}
-	return result
 }
 
-func selectClusterByWeight(infos []clusterSelectInfo) clusterSelectInfo {
-	if len(infos) == 1 {
-		return infos[0]
-	}
-	totalWeight := 0
-	for _, info := range infos {
-		w := info.weight
-		if w <= 0 {
-			w = 1
-		}
-		totalWeight += w
-	}
-	r := rand.Intn(totalWeight)
-	cumulative := 0
-	for _, info := range infos {
-		w := info.weight
-		if w <= 0 {
-			w = 1
-		}
-		cumulative += w
-		if r < cumulative {
-			return info
+func applyRTTScore(candidates []nodeCandidate) {
+	for i := range candidates {
+		if rtt := GetNodeRTT(candidates[i].Node.ID); rtt > 0 {
+			candidates[i].Node.Latency = rtt
 		}
 	}
-	return infos[0]
+}
+
+func selectByScoreLevels(candidates []nodeCandidate) []models.CdnNode {
+	levels := []struct {
+		threshold float64
+		name      string
+	}{
+		{80, "Level 0 (high match)"},
+		{60, "Level 1 (degraded)"},
+		{20, "Level 2 (further degraded)"},
+		{0, "Level 3 (fallback)"},
+	}
+
+	for _, level := range levels {
+		var filtered []nodeCandidate
+		for _, c := range candidates {
+			if level.threshold > 0 && c.EffectiveScore >= level.threshold {
+				filtered = append(filtered, c)
+			} else if level.threshold == 0 {
+				filtered = append(filtered, c)
+			}
+		}
+		if len(filtered) > 0 {
+			nodes := make([]models.CdnNode, len(filtered))
+			for i, c := range filtered {
+				nodes[i] = c.Node
+			}
+			return nodes
+		}
+	}
+
+	nodes := make([]models.CdnNode, len(candidates))
+	for i, c := range candidates {
+		nodes[i] = c.Node
+	}
+	return nodes
 }
 
 func selectNode(nodes []models.CdnNode, strategy string, ruleID uint) models.CdnNode {
@@ -331,18 +319,17 @@ func selectNode(nodes []models.CdnNode, strategy string, ruleID uint) models.Cdn
 	}
 }
 
-// ScoreWeights holds the weight coefficients for multi-metric scoring.
 type ScoreWeights struct {
-	Latency     float64
-	TxBandwidth float64
-	RxBandwidth float64
-	CPU         float64
-	Mem         float64
-	Weight      float64
+	Latency      float64
+	TxBandwidth  float64
+	RxBandwidth  float64
+	CPU          float64
+	Mem          float64
+	Weight       float64
+	PerfStats    float64
+	CacheHitRate float64
 }
 
-// normalMinMax normalizes values to [0,1] where larger is better.
-// Returns 0.5 for all elements when all inputs are equal.
 func normalMinMax(vals []float64) []float64 {
 	n := len(vals)
 	result := make([]float64, n)
@@ -367,8 +354,6 @@ func normalMinMax(vals []float64) []float64 {
 	return result
 }
 
-// normalMinMaxInv normalizes inverse values to [0,1] where smaller is better.
-// Values <= 0 (unprobed/invalid) get the lowest score.
 func normalMinMaxInv(vals []float64) []float64 {
 	inv := make([]float64, len(vals))
 	for i, v := range vals {
@@ -381,8 +366,6 @@ func normalMinMaxInv(vals []float64) []float64 {
 	return normalMinMax(inv)
 }
 
-// bandwidthScore applies piecewise penalty based on bandwidth utilization.
-// 0% → 1.0, 70% → 0.9, 90% → 0.2, 100% → 0.0, >100% → 0.0
 func bandwidthScore(util float64) float64 {
 	switch {
 	case util >= 1.0:
@@ -423,6 +406,8 @@ func selectNodeByScore(nodes []models.CdnNode, weights ScoreWeights) models.CdnN
 	cpus := make([]float64, n)
 	mems := make([]float64, n)
 	weightVals := make([]float64, n)
+	perfVals := make([]float64, n)
+	cacheHitVals := make([]float64, n)
 
 	for i, node := range nodes {
 		latencies[i] = float64(node.Latency)
@@ -430,12 +415,19 @@ func selectNodeByScore(nodes []models.CdnNode, weights ScoreWeights) models.CdnN
 		cpus[i] = node.CPUUsage
 		mems[i] = node.MemUsage
 		weightVals[i] = float64(node.Weight)
+		cacheHitVals[i] = node.CacheHitRate
+		stats := GetNodePerfStats(node.ID)
+		if stats.AvgResponseTimeMs > 0 {
+			perfVals[i] = stats.AvgResponseTimeMs
+		}
 	}
 
 	normLat := normalMinMaxInv(latencies)
 	normCPU := normalMinMaxInv(cpus)
 	normMem := normalMinMaxInv(mems)
 	normW := normalMinMax(weightVals)
+	normPerf := normalMinMaxInv(perfVals)
+	normCacheHit := normalMinMax(cacheHitVals)
 
 	bestScore := -1.0
 	bestIdx := 0
@@ -445,7 +437,9 @@ func selectNodeByScore(nodes []models.CdnNode, weights ScoreWeights) models.CdnN
 			weights.RxBandwidth*bandwidthScore(rxUtils[i]) +
 			weights.CPU*normCPU[i] +
 			weights.Mem*normMem[i] +
-			weights.Weight*normW[i]
+			weights.Weight*normW[i] +
+			weights.PerfStats*normPerf[i] +
+			weights.CacheHitRate*normCacheHit[i]
 		if score > bestScore {
 			bestScore = score
 			bestIdx = i
@@ -454,15 +448,16 @@ func selectNodeByScore(nodes []models.CdnNode, weights ScoreWeights) models.CdnN
 	return nodes[bestIdx]
 }
 
-// GetScoreWeights returns the score weights from Viper config (env var > config.yaml > default).
 func GetScoreWeights() ScoreWeights {
 	return ScoreWeights{
-		Latency:     getScoreWeight("latency", 0.35),
-		TxBandwidth: getScoreWeight("tx_bandwidth", 0.15),
-		RxBandwidth: getScoreWeight("rx_bandwidth", 0.15),
-		CPU:         getScoreWeight("cpu", 0.20),
-		Mem:         getScoreWeight("mem", 0.10),
-		Weight:      getScoreWeight("weight", 0.05),
+		Latency:      getScoreWeight("latency", 0.25),
+		TxBandwidth:  getScoreWeight("tx_bandwidth", 0.10),
+		RxBandwidth:  getScoreWeight("rx_bandwidth", 0.10),
+		CPU:          getScoreWeight("cpu", 0.12),
+		Mem:          getScoreWeight("mem", 0.06),
+		Weight:       getScoreWeight("weight", 0.03),
+		PerfStats:    getScoreWeight("perf_stats", 0.18),
+		CacheHitRate: getScoreWeight("cache_hit_rate", 0.16),
 	}
 }
 

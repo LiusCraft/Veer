@@ -64,6 +64,8 @@ func main() {
 			Description: "Default cluster created on first startup",
 			Strategy:    "round-robin",
 			Status:      "active",
+			Region:      []string{"华东", "华南", "华北", "华中", "西南", "西北", "东北"},
+			ISP:         []string{"电信", "联通", "移动", "其他"},
 		}
 		if err := db.Create(&defaultCluster).Error; err != nil {
 			log.Fatalf("Failed to create default cluster: %v", err)

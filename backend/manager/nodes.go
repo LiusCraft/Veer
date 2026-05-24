@@ -121,18 +121,26 @@ func ListNodes(db *gorm.DB) gin.HandlerFunc {
 func CreateNode(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
-			Name           string `json:"name"`
-			URL            string `json:"url"`
-			Weight         int    `json:"weight"`
-			Region         string `json:"region"`
-			Status         string `json:"status"`
-			ClusterIDs     []uint `json:"cluster_ids"`
-			IP             string `json:"ip"`
-			ISP            string `json:"isp"`
-			Provider       string `json:"provider"`
-			NodeType       string `json:"node_type"`
-			BandwidthMbps  int    `json:"bandwidth_mbps"`
-			MaxConnections int    `json:"max_connections"`
+			Name           string   `json:"name"`
+			URL            string   `json:"url"`
+			Weight         int      `json:"weight"`
+			Region         string   `json:"region"`
+			Status         string   `json:"status"`
+			ClusterIDs     []uint   `json:"cluster_ids"`
+			IP             string   `json:"ip"`
+			ISP            string   `json:"isp"`
+			Provider       string   `json:"provider"`
+			NodeType       string   `json:"node_type"`
+			BandwidthMbps  int      `json:"bandwidth_mbps"`
+			MaxConnections int      `json:"max_connections"`
+			Province       string   `json:"province"`
+			City           string   `json:"city"`
+			ISPList        []string `json:"isp_list"`
+			CPUCores       int      `json:"cpu_cores"`
+			MemoryMB       int64    `json:"memory_mb"`
+			DiskSizeMB     int64    `json:"disk_size_mb"`
+			UplinkMbps     int      `json:"uplink_mbps"`
+			DownlinkMbps   int      `json:"downlink_mbps"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -168,6 +176,11 @@ func CreateNode(db *gorm.DB) gin.HandlerFunc {
 			return
 		}
 
+		ispList := body.ISPList
+		if len(ispList) == 0 && body.ISP != "" {
+			ispList = []string{body.ISP}
+		}
+
 		node := models.CdnNode{
 			Name:           body.Name,
 			URL:            body.URL,
@@ -180,6 +193,14 @@ func CreateNode(db *gorm.DB) gin.HandlerFunc {
 			NodeType:       body.NodeType,
 			BandwidthMbps:  body.BandwidthMbps,
 			MaxConnections: body.MaxConnections,
+			Province:       body.Province,
+			City:           body.City,
+			ISPList:        ispList,
+			CPUCores:       body.CPUCores,
+			MemoryMB:       body.MemoryMB,
+			DiskSizeMB:     body.DiskSizeMB,
+			UplinkMbps:     body.UplinkMbps,
+			DownlinkMbps:   body.DownlinkMbps,
 		}
 
 		if err := db.Create(&node).Error; err != nil {
@@ -212,18 +233,26 @@ func UpdateNode(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		var body struct {
-			Name           string  `json:"name"`
-			URL            string  `json:"url"`
-			Weight         int     `json:"weight"`
-			Region         *string `json:"region"`
-			Status         string  `json:"status"`
-			ClusterIDs     []uint  `json:"cluster_ids"`
-			IP             *string `json:"ip"`
-			ISP            *string `json:"isp"`
-			Provider       *string `json:"provider"`
-			NodeType       *string `json:"node_type"`
-			BandwidthMbps  *int    `json:"bandwidth_mbps"`
-			MaxConnections *int    `json:"max_connections"`
+			Name           string   `json:"name"`
+			URL            string   `json:"url"`
+			Weight         int      `json:"weight"`
+			Region         *string  `json:"region"`
+			Status         string   `json:"status"`
+			ClusterIDs     []uint   `json:"cluster_ids"`
+			IP             *string  `json:"ip"`
+			ISP            *string  `json:"isp"`
+			Provider       *string  `json:"provider"`
+			NodeType       *string  `json:"node_type"`
+			BandwidthMbps  *int     `json:"bandwidth_mbps"`
+			MaxConnections *int     `json:"max_connections"`
+			Province       *string  `json:"province"`
+			City           *string  `json:"city"`
+			ISPList        []string `json:"isp_list"`
+			CPUCores       *int     `json:"cpu_cores"`
+			MemoryMB       *int64   `json:"memory_mb"`
+			DiskSizeMB     *int64   `json:"disk_size_mb"`
+			UplinkMbps     *int     `json:"uplink_mbps"`
+			DownlinkMbps   *int     `json:"downlink_mbps"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -283,6 +312,30 @@ func UpdateNode(db *gorm.DB) gin.HandlerFunc {
 		}
 		if body.MaxConnections != nil {
 			node.MaxConnections = *body.MaxConnections
+		}
+		if body.Province != nil {
+			node.Province = *body.Province
+		}
+		if body.City != nil {
+			node.City = *body.City
+		}
+		if body.ISPList != nil {
+			node.ISPList = body.ISPList
+		}
+		if body.CPUCores != nil {
+			node.CPUCores = *body.CPUCores
+		}
+		if body.MemoryMB != nil {
+			node.MemoryMB = *body.MemoryMB
+		}
+		if body.DiskSizeMB != nil {
+			node.DiskSizeMB = *body.DiskSizeMB
+		}
+		if body.UplinkMbps != nil {
+			node.UplinkMbps = *body.UplinkMbps
+		}
+		if body.DownlinkMbps != nil {
+			node.DownlinkMbps = *body.DownlinkMbps
 		}
 
 		if err := db.Save(&node).Error; err != nil {

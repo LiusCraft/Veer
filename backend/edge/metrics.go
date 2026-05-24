@@ -30,12 +30,14 @@ func newMetricsCollector(cacheDiskPath string) *metricsCollector {
 }
 
 type systemMetrics struct {
-	CPUUsage  float64
-	MemUsage  float64
-	DiskUsage float64
-	LoadAvg   float64
-	TxBytes   int64
-	RxBytes   int64
+	CPUUsage    float64
+	MemUsage    float64
+	DiskUsage   float64
+	LoadAvg     float64
+	TxBytes     int64
+	RxBytes     int64
+	CacheHits   int64
+	CacheMisses int64
 }
 
 func (mc *metricsCollector) collect() systemMetrics {
@@ -263,6 +265,9 @@ func readUint64File(path, key string) (uint64, error) {
 			}
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
 	return 0, fmt.Errorf("key %s not found in %s", key, path)
 }
 
@@ -292,6 +297,9 @@ func collectMem() float64 {
 		case strings.HasPrefix(line, "MemAvailable:"):
 			available = parseMemValue(line)
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return 0
 	}
 	if total == 0 {
 		return 0
@@ -448,6 +456,9 @@ func readMemTotalBytes() (uint64, error) {
 			return parseMemValue(line), nil
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		return 0, err
+	}
 	return 0, fmt.Errorf("MemTotal not found")
 }
 
@@ -467,6 +478,9 @@ func collectLoad() float64 {
 				return math.Round(val*10) / 10
 			}
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		return 0
 	}
 	return 0
 }

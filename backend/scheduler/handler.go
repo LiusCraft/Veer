@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"veer/geoip"
 	"veer/models"
 
 	"github.com/gin-gonic/gin"
@@ -61,9 +62,8 @@ func SchedulerHandler(cache *RuleCache) gin.HandlerFunc {
 			}
 
 			if rule.RuleType == "domain_routing" {
-				reqRegion := c.GetHeader("X-Region")
-				reqISP := c.GetHeader("X-ISP")
-				selectedNode, ok := cache.selectNodeForRule(rule.ID, rule.Strategy, reqRegion, reqISP)
+				clientInfo := buildClientMatchInfo(c.Request.RemoteAddr, c.GetHeader("X-Region"), c.GetHeader("X-ISP"))
+				selectedNode, ok := cache.selectNodeForRule(rule.ID, rule.Strategy, clientInfo)
 				if !ok {
 					var nodeIDs []uint
 					if err := json.Unmarshal([]byte(rule.NodeIDs), &nodeIDs); err == nil && len(nodeIDs) > 0 {
@@ -163,4 +163,34 @@ func SchedulerHandler(cache *RuleCache) gin.HandlerFunc {
 
 		c.JSON(http.StatusNotFound, gin.H{"error": "no matching redirect for: " + host + requestPath})
 	}
+}
+
+func buildClientMatchInfo(remoteAddr, reqRegion, reqISP string) ClientMatchInfo {
+	info := ClientMatchInfo{}
+
+	regionFound := reqRegion != ""
+	ispFound := reqISP != ""
+
+	if regionFound {
+		info.Region = reqRegion
+	}
+	if ispFound {
+		info.ISP = reqISP
+	}
+
+	if regionFound && ispFound {
+		return info
+	}
+
+	province, region, isp := geoip.LookupClientInfo(remoteAddr)
+	info.Province = province
+	if !regionFound {
+		info.Region = region
+	}
+	if !ispFound {
+		info.ISP = isp
+	}
+	info.MatchedByGeoIP = !regionFound || !ispFound
+
+	return info
 }

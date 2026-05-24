@@ -41,6 +41,15 @@ type CdnNode struct {
 	OriginBaseURL string `json:"origin_base_url" gorm:"size:512;default:''"`
 	CacheTTL      int    `json:"cache_ttl" gorm:"default:300"`
 
+	// 省份级位置
+	Province    string   `json:"province" gorm:"size:32;default:''"`
+	City        string   `json:"city" gorm:"size:32;default:''"`
+	ISPList     []string `json:"isp_list" gorm:"serializer:json"`
+	MatchRegion []string `json:"match_region" gorm:"serializer:json"`
+
+	// 缓存命中率（边缘节点心跳上报）
+	CacheHitRate float64 `json:"cache_hit_rate" gorm:"default:0"`
+
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

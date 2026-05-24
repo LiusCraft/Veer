@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	lua "github.com/yuin/gopher-lua"
@@ -57,11 +58,21 @@ func (rc *ruleCache) Update(m map[string]domainRule) {
 }
 
 type EdgeServer struct {
-	cfg       *config.EdgeConfig
-	cache     *TieredCache
-	ruleCache *ruleCache
-	client    *http.Client
-	luaPool   *lStatePool
+	cfg         *config.EdgeConfig
+	cache       *TieredCache
+	ruleCache   *ruleCache
+	client      *http.Client
+	luaPool     *lStatePool
+	cacheHits   int64
+	cacheMisses int64
+}
+
+func (s *EdgeServer) incCacheHit() {
+	atomic.AddInt64(&s.cacheHits, 1)
+}
+
+func (s *EdgeServer) incCacheMiss() {
+	atomic.AddInt64(&s.cacheMisses, 1)
 }
 
 func NewEdgeServer(cfg *config.EdgeConfig) *EdgeServer {
@@ -164,6 +175,7 @@ func (s *EdgeServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if entry, ok := s.cache.Get(cacheKey); ok {
+		s.incCacheHit()
 		entry = s.transformResponse(rule, r, entry)
 		for k, v := range entry.Headers {
 			w.Header()[k] = v
@@ -172,70 +184,13 @@ func (s *EdgeServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Cache", "HIT")
 		w.Header().Set("X-Edge", s.cfg.Name)
 		w.WriteHeader(entry.StatusCode)
-		if r.Method == http.MethodGet && len(entry.Body) > 0 {
-			w.Write(entry.Body)
-		}
-		return
-	}
-
-	if staleEntry, ok := s.cache.GetStale(cacheKey); ok {
-		newEntry, err := s.fetchFromOrigin(rule.originBaseURL, requestPath, staleEntry, rule.requestHeaders)
-		if err == nil && newEntry.StatusCode == http.StatusNotModified {
-			staleEntry.ExpiresAt = time.Now().Add(parseCacheControlTTL(staleEntry.Headers, defaultTTL))
-			s.cache.Set(cacheKey, staleEntry)
-			respEntry := s.transformResponse(rule, r, staleEntry)
-			for k, v := range respEntry.Headers {
-				w.Header()[k] = v
-			}
-			applyResponseHeaders(rule.responseHeaders, w)
-			w.Header().Set("X-Cache", "REVALIDATED")
-			w.Header().Set("X-Edge", s.cfg.Name)
-			w.WriteHeader(respEntry.StatusCode)
-			if r.Method == http.MethodGet {
-				w.Write(respEntry.Body)
-			}
-			return
-		}
-		if err == nil && newEntry.StatusCode < 500 {
-			s.cache.Set(cacheKey, newEntry)
-			respEntry := s.transformResponse(rule, r, newEntry)
-			for k, v := range respEntry.Headers {
-				w.Header()[k] = v
-			}
-			applyResponseHeaders(rule.responseHeaders, w)
-			w.Header().Set("X-Cache", "MISS")
-			w.Header().Set("X-Edge", s.cfg.Name)
-			w.WriteHeader(respEntry.StatusCode)
-			if r.Method == http.MethodGet {
-				w.Write(respEntry.Body)
-			}
-			return
-		}
-	}
-
-	if rule.bypassCache {
-		entry, err := s.fetchFromOrigin(rule.originBaseURL, requestPath, nil, rule.requestHeaders)
-		if err != nil {
-			log.Printf("[edge] origin fetch failed: path=%s err=%v", resourcePath, err)
-			w.Header().Set("X-Cache", "BYPASS")
-			w.Header().Set("X-Edge", s.cfg.Name)
-			http.Error(w, fmt.Sprintf("Bad Gateway: %v", err), http.StatusBadGateway)
-			return
-		}
-		entry = s.transformResponse(rule, r, entry)
-		for k, v := range entry.Headers {
-			w.Header()[k] = v
-		}
-		applyResponseHeaders(rule.responseHeaders, w)
-		w.Header().Set("X-Cache", "BYPASS")
-		w.Header().Set("X-Edge", s.cfg.Name)
-		w.WriteHeader(entry.StatusCode)
 		if r.Method == http.MethodGet {
 			w.Write(entry.Body)
 		}
 		return
 	}
 
+	s.incCacheMiss()
 	entry, err := s.fetchFromOrigin(rule.originBaseURL, requestPath, nil, rule.requestHeaders)
 	if err != nil {
 		log.Printf("[edge] origin fetch failed: path=%s err=%v", resourcePath, err)

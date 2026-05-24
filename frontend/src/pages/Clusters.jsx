@@ -26,6 +26,7 @@ const EMPTY_FORM = {
   isp: [],
   provider: '',
   status: 'active',
+  bandwidth_price: 1.0,
 }
 
 const REGIONS = ['华东', '华北', '华南', '海外', '其他']
@@ -87,6 +88,7 @@ function Clusters() {
         isp: toArray(cluster.isp),
         provider: cluster.provider || '',
         status: cluster.status,
+        bandwidth_price: cluster.bandwidth_price ?? 1.0,
       })
     } else {
       setEditingCluster(null)
@@ -360,6 +362,10 @@ function Clusters() {
                 <MenuItem key={s.value} value={s.value}>{s.label}</MenuItem>
               ))}
             </TextField>
+            <TextField label="带宽单价" type="number" value={form.bandwidth_price}
+              onChange={handleFormChange('bandwidth_price')} fullWidth
+              inputProps={{ min: 0.1, max: 100, step: 0.1 }}
+              placeholder="带宽采购单价系数" />
             <TextField label="备注" value={form.description}
               onChange={handleFormChange('description')} fullWidth multiline rows={2}
               placeholder="集群用途说明" />

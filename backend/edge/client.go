@@ -7,7 +7,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sync/atomic"
 	"time"
+
 	"veer/config"
 )
 
@@ -64,6 +66,8 @@ type heartbeatRequest struct {
 	BandwidthBytes1m int64   `json:"bandwidth_bytes_1m"`
 	TxBytes1m        int64   `json:"tx_bytes_1m"`
 	RxBytes1m        int64   `json:"rx_bytes_1m"`
+	CacheHits1m      int64   `json:"cache_hits_1m"`
+	CacheMisses1m    int64   `json:"cache_misses_1m"`
 }
 
 type managerClient struct {
@@ -85,12 +89,14 @@ func newManagerClient(mgr config.EdgeManagerConfig) *managerClient {
 
 func (mc *managerClient) sendHeartbeat(m systemMetrics) error {
 	body := heartbeatRequest{
-		CPUUsage:  m.CPUUsage,
-		MemUsage:  m.MemUsage,
-		DiskUsage: m.DiskUsage,
-		LoadAvg:   m.LoadAvg,
-		TxBytes1m: m.TxBytes,
-		RxBytes1m: m.RxBytes,
+		CPUUsage:      m.CPUUsage,
+		MemUsage:      m.MemUsage,
+		DiskUsage:     m.DiskUsage,
+		LoadAvg:       m.LoadAvg,
+		TxBytes1m:     m.TxBytes,
+		RxBytes1m:     m.RxBytes,
+		CacheHits1m:   m.CacheHits,
+		CacheMisses1m: m.CacheMisses,
 	}
 
 	data, err := json.Marshal(body)
@@ -265,7 +271,8 @@ func SyncRules(srv *EdgeServer) error {
 	return nil
 }
 
-func StartHeartbeatLoop(cfg *config.EdgeConfig) {
+func StartHeartbeatLoop(srv *EdgeServer) {
+	cfg := srv.cfg
 	if cfg.Manager.URL == "" || cfg.NodeID == 0 {
 		log.Println("[edge] heartbeat loop skipped (no manager or node ID)")
 		return
@@ -277,25 +284,24 @@ func StartHeartbeatLoop(cfg *config.EdgeConfig) {
 
 	log.Printf("[edge] heartbeat loop started (interval=30s, node_id=%d)", cfg.NodeID)
 
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	// send first heartbeat immediately
-	m := collector.collect()
-	if err := mc.sendHeartbeat(m); err != nil {
-		log.Printf("[edge] initial heartbeat failed: %v", err)
-	} else {
-		log.Printf("[edge] heartbeat sent (cpu=%.1f%%, mem=%.1f%%, disk=%.1f%%, load=%.1f)",
-			m.CPUUsage, m.MemUsage, m.DiskUsage, m.LoadAvg)
-	}
-
-	for range ticker.C {
+	sendHB := func() {
 		m := collector.collect()
+		m.CacheHits = atomic.LoadInt64(&srv.cacheHits)
+		m.CacheMisses = atomic.LoadInt64(&srv.cacheMisses)
 		if err := mc.sendHeartbeat(m); err != nil {
 			log.Printf("[edge] heartbeat failed: %v", err)
 		} else {
 			log.Printf("[edge] heartbeat sent (cpu=%.1f%%, mem=%.1f%%, disk=%.1f%%, load=%.1f)",
 				m.CPUUsage, m.MemUsage, m.DiskUsage, m.LoadAvg)
 		}
+	}
+
+	sendHB()
+
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		sendHB()
 	}
 }

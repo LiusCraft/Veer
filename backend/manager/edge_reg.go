@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"veer/config"
+	"veer/geoip"
 	"veer/models"
 
 	"github.com/gin-gonic/gin"
@@ -38,6 +39,16 @@ type EdgeRegisterRequest struct {
 	PublicURL   string `json:"public_url" binding:"required"`
 	InternalURL string `json:"internal_url"`
 	Secret      string `json:"secret" binding:"required"`
+
+	ISP          string   `json:"isp"`
+	Province     string   `json:"province"`
+	City         string   `json:"city"`
+	ISPList      []string `json:"isp_list"`
+	CPUCores     int      `json:"cpu_cores"`
+	MemoryMB     int64    `json:"memory_mb"`
+	DiskSizeMB   int64    `json:"disk_size_mb"`
+	UplinkMbps   int      `json:"uplink_mbps"`
+	DownlinkMbps int      `json:"downlink_mbps"`
 }
 
 type EdgeRegisterResponse struct {
@@ -69,6 +80,24 @@ func RegisterEdgeHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFunc
 			return
 		}
 
+		province, city := req.Province, req.City
+		if province == "" || city == "" {
+			p, ci, err := geoip.LookupIP(c.Request.RemoteAddr)
+			if err == nil {
+				if province == "" {
+					province = p
+				}
+				if city == "" {
+					city = ci
+				}
+			}
+		}
+
+		ispList := req.ISPList
+		if len(ispList) == 0 && req.ISP != "" {
+			ispList = []string{req.ISP}
+		}
+
 		var node models.CdnNode
 		result := db.Where("name = ?", req.Name).First(&node)
 
@@ -79,6 +108,15 @@ func RegisterEdgeHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFunc
 					URL:           req.PublicURL,
 					InternalURL:   req.InternalURL,
 					Region:        req.Region,
+					ISP:           req.ISP,
+					Province:      province,
+					City:          city,
+					ISPList:       ispList,
+					CPUCores:      req.CPUCores,
+					MemoryMB:      req.MemoryMB,
+					DiskSizeMB:    req.DiskSizeMB,
+					UplinkMbps:    req.UplinkMbps,
+					DownlinkMbps:  req.DownlinkMbps,
 					Status:        "active",
 					Weight:        1,
 					OriginBaseURL: cfg.Edge.OriginBaseURL,
@@ -103,10 +141,19 @@ func RegisterEdgeHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFunc
 			}
 		} else {
 			updates := map[string]interface{}{
-				"url":          req.PublicURL,
-				"internal_url": req.InternalURL,
-				"region":       req.Region,
-				"status":       "active",
+				"url":           req.PublicURL,
+				"internal_url":  req.InternalURL,
+				"region":        req.Region,
+				"isp":           req.ISP,
+				"province":      province,
+				"city":          city,
+				"isp_list":      ispList,
+				"cpu_cores":     req.CPUCores,
+				"memory_mb":     req.MemoryMB,
+				"disk_size_mb":  req.DiskSizeMB,
+				"uplink_mbps":   req.UplinkMbps,
+				"downlink_mbps": req.DownlinkMbps,
+				"status":        "active",
 			}
 			if err := db.Model(&node).Updates(updates).Error; err != nil {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update node"})

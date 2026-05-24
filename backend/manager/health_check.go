@@ -210,7 +210,7 @@ func (m *HealthCheckManager) updateClusterStatus() {
 		if stats.Total == 0 {
 			continue
 		}
-		newStatus := cl.Status
+		var newStatus string
 		switch {
 		case stats.Active == 0:
 			newStatus = "inactive"

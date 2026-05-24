@@ -133,7 +133,7 @@ func (p *lStatePool) Get() *lua.LState {
 }
 
 func (p *lStatePool) Put(L *lua.LState) {
-	L.SetContext(nil) // clear context for reuse
+	L.SetContext(context.TODO()) // clear context for reuse
 	p.pool.Put(L)
 }
 

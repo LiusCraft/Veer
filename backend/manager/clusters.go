@@ -74,13 +74,14 @@ func ListClusters(db *gorm.DB) gin.HandlerFunc {
 func CreateCluster(db *gorm.DB) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
-			Name        string   `json:"name"`
-			Description string   `json:"description"`
-			Strategy    string   `json:"strategy"`
-			Region      []string `json:"region"`
-			ISP         []string `json:"isp"`
-			Provider    string   `json:"provider"`
-			Status      string   `json:"status"`
+			Name           string   `json:"name"`
+			Description    string   `json:"description"`
+			Strategy       string   `json:"strategy"`
+			Region         []string `json:"region"`
+			ISP            []string `json:"isp"`
+			Provider       string   `json:"provider"`
+			Status         string   `json:"status"`
+			BandwidthPrice float64  `json:"bandwidth_price"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -117,14 +118,20 @@ func CreateCluster(db *gorm.DB) gin.HandlerFunc {
 			status = "active"
 		}
 
+		bwPrice := body.BandwidthPrice
+		if bwPrice <= 0 {
+			bwPrice = 1.0
+		}
+
 		cluster := models.Cluster{
-			Name:        body.Name,
-			Description: body.Description,
-			Strategy:    strategy,
-			Region:      body.Region,
-			ISP:         body.ISP,
-			Provider:    body.Provider,
-			Status:      status,
+			Name:           body.Name,
+			Description:    body.Description,
+			Strategy:       strategy,
+			Region:         body.Region,
+			ISP:            body.ISP,
+			Provider:       body.Provider,
+			Status:         status,
+			BandwidthPrice: bwPrice,
 		}
 
 		if err := db.Create(&cluster).Error; err != nil {
@@ -167,13 +174,14 @@ func UpdateCluster(db *gorm.DB) gin.HandlerFunc {
 		}
 
 		var body struct {
-			Name        *string  `json:"name"`
-			Description *string  `json:"description"`
-			Strategy    *string  `json:"strategy"`
-			Region      []string `json:"region"`
-			ISP         []string `json:"isp"`
-			Provider    *string  `json:"provider"`
-			Status      *string  `json:"status"`
+			Name           *string  `json:"name"`
+			Description    *string  `json:"description"`
+			Strategy       *string  `json:"strategy"`
+			Region         []string `json:"region"`
+			ISP            []string `json:"isp"`
+			Provider       *string  `json:"provider"`
+			Status         *string  `json:"status"`
+			BandwidthPrice *float64 `json:"bandwidth_price"`
 		}
 
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -211,6 +219,9 @@ func UpdateCluster(db *gorm.DB) gin.HandlerFunc {
 		}
 		if body.Status != nil {
 			cluster.Status = *body.Status
+		}
+		if body.BandwidthPrice != nil {
+			cluster.BandwidthPrice = *body.BandwidthPrice
 		}
 
 		if err := db.Save(&cluster).Error; err != nil {
