@@ -32,11 +32,13 @@ type registerResponse struct {
 }
 
 type rulesResponseData struct {
-	Domain               string `json:"domain"`
-	OriginBaseURL        string `json:"origin_base_url"`
-	CacheTTLSeconds      *int   `json:"cache_ttl_seconds,omitempty"`
-	CacheControlOverride string `json:"cache_control_override,omitempty"`
-	BypassCache          bool   `json:"bypass_cache"`
+	Domain               string               `json:"domain"`
+	OriginBaseURL        string               `json:"origin_base_url"`
+	CacheTTLSeconds      *int                 `json:"cache_ttl_seconds,omitempty"`
+	CacheControlOverride string               `json:"cache_control_override,omitempty"`
+	BypassCache          bool                 `json:"bypass_cache"`
+	ResponseHeaders      []responseHeaderRule `json:"response_headers,omitempty"`
+	LuaScript            string               `json:"lua_script,omitempty"`
 }
 
 type rulesResponse struct {
@@ -216,12 +218,21 @@ func SyncRules(srv *EdgeServer) error {
 
 	ruleMap := make(map[string]domainRule, len(rules))
 	for _, r := range rules {
-		ruleMap[r.Domain] = domainRule{
+		dr := domainRule{
 			originBaseURL:        r.OriginBaseURL,
 			cacheTTLSeconds:      r.CacheTTLSeconds,
 			cacheControlOverride: r.CacheControlOverride,
 			bypassCache:          r.BypassCache,
+			responseHeaders:      r.ResponseHeaders,
+			luaScript:            r.LuaScript,
 		}
+		if r.LuaScript != "" {
+			se := NewScriptEngine(r.LuaScript)
+			if se != nil {
+				dr.luaProto = se.proto
+			}
+		}
+		ruleMap[r.Domain] = dr
 	}
 
 	srv.ruleCache.Update(ruleMap)

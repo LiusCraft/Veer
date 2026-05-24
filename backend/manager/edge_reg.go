@@ -1,6 +1,8 @@
 package manager
 
 import (
+	"encoding/json"
+	"log"
 	"net/http"
 
 	"veer/config"
@@ -10,12 +12,20 @@ import (
 	"gorm.io/gorm"
 )
 
+type edgeResponseHeaders struct {
+	Action string `json:"action"`
+	Name   string `json:"name"`
+	Value  string `json:"value,omitempty"`
+}
+
 type EdgeRule struct {
-	Domain               string `json:"domain"`
-	OriginBaseURL        string `json:"origin_base_url"`
-	CacheTTLSeconds      *int   `json:"cache_ttl_seconds,omitempty"`
-	CacheControlOverride string `json:"cache_control_override,omitempty"`
-	BypassCache          bool   `json:"bypass_cache"`
+	Domain               string                `json:"domain"`
+	OriginBaseURL        string                `json:"origin_base_url"`
+	CacheTTLSeconds      *int                  `json:"cache_ttl_seconds,omitempty"`
+	CacheControlOverride string                `json:"cache_control_override,omitempty"`
+	BypassCache          bool                  `json:"bypass_cache"`
+	ResponseHeaders      []edgeResponseHeaders `json:"response_headers,omitempty"`
+	LuaScript            string                `json:"lua_script,omitempty"`
 }
 
 type EdgeRegisterRequest struct {
@@ -126,12 +136,21 @@ func ListEdgeRulesHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFun
 
 		edgeRules := make([]EdgeRule, 0, len(rules))
 		for _, r := range rules {
+			var respHeaders []edgeResponseHeaders
+			if r.ResponseHeaderRules != "" {
+				if err := json.Unmarshal([]byte(r.ResponseHeaderRules), &respHeaders); err != nil {
+					log.Printf("[manager] failed to parse response_header_rules for rule %d (domain=%s): %v",
+						r.ID, r.Domain, err)
+				}
+			}
 			edgeRules = append(edgeRules, EdgeRule{
 				Domain:               r.Domain,
 				OriginBaseURL:        r.OriginBaseURL,
 				CacheTTLSeconds:      r.CacheTTLSeconds,
 				CacheControlOverride: r.CacheControlOverride,
 				BypassCache:          r.BypassCache,
+				ResponseHeaders:      respHeaders,
+				LuaScript:            r.LuaScript,
 			})
 		}
 

@@ -28,5 +28,11 @@ type RedirectRule struct {
 	CacheControlOverride string `json:"cache_control_override" gorm:"size:128;default:''"`
 	BypassCache          bool   `json:"bypass_cache" gorm:"default:false"`
 
+	// ResponseHeaderRules is a JSON array of header rewrite actions, e.g.:
+	// [{"action":"set","name":"X-Frame-Options","value":"DENY"},{"action":"remove","name":"X-Powered-By"}]
+	ResponseHeaderRules string `json:"response_header_rules" gorm:"type:text;default:''"`
+
+	LuaScript string `json:"lua_script" gorm:"type:text;default:''"`
+
 	CreatedAt time.Time `json:"created_at"`
 }

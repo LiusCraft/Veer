@@ -25,12 +25,12 @@ go build -o edge ./cmd/edge
 
 ## Tests
 
-Zero tests exist. No `_test.go` files in the repo.
+Run `cd backend && go test ./edge/...` for edge node tests (cache, Lua script engine).
 
 ## Key conventions
 
 - Module path: `veer` (not a path-based module)
-- Go 1.21, CGO_ENABLED=1 required (SQLite via GORM)
+- Go 1.23, CGO_ENABLED=1 required (SQLite via GORM; gopher-lua requires 1.23+)
 - Config priority: env var > `config.yaml` > code default
 - DB: SQLite, auto-migrates on startup, seeds 3 nodes + 2 rules if empty
 - Default admin: `admin` / `admin123` (from config)

@@ -21,6 +21,9 @@ import ArrowForwardIcon from '@mui/icons-material/ArrowForward'
 import PublicIcon from '@mui/icons-material/Public'
 import MemoryIcon from '@mui/icons-material/Memory'
 import BlockIcon from '@mui/icons-material/Block'
+import AddCircleOutlineIcon from '@mui/icons-material/AddCircleOutline'
+import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline'
+import CodeIcon from '@mui/icons-material/Code'
 import { rulesApi, clustersApi } from '../api/index.js'
 import { exportToCSV } from '../utils/csv.js'
 
@@ -35,6 +38,8 @@ const RULE_TYPE_META = {
 const EMPTY_ROUTING_FORM = {
   name: '', domain: '', description: '', strategy: 'round-robin',
   origin_base_url: '', enabled: true,
+  response_header_rules: '',
+  lua_script: '',
 }
 const EMPTY_REDIRECT_FORM = {
   name: '', domain: '', description: '',
@@ -162,6 +167,14 @@ function RoutingRulePreview({ rule, clusters: allClusters }) {
             <Chip icon={<BlockIcon />} label="跳过缓存" size="small"
               color="error" variant="outlined" sx={{ height: 20, fontSize: 10, '& .MuiChip-icon': { fontSize: 11 } }} />
           )}
+          {rule.response_header_rules && rule.response_header_rules !== '[]' && (
+            <Chip label="头改写" size="small" color="success" variant="outlined"
+              sx={{ height: 20, fontSize: 10 }} />
+          )}
+          {rule.lua_script && (
+            <Chip label="Lua" size="small" color="warning" variant="outlined"
+              sx={{ height: 20, fontSize: 10 }} />
+          )}
         </Box>
       </Box>
       <ArrowForwardIcon sx={{ fontSize: 16, color: 'primary.main', flexShrink: 0 }} />
@@ -236,6 +249,7 @@ function Rules() {
   const [typeFilter, setTypeFilter] = useState('')
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState([])
+  const [localHeaderRules, setLocalHeaderRules] = useState([])
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -268,6 +282,11 @@ function Rules() {
       .some(v => v && v.toLowerCase().includes(kw))
   })
 
+  const parseHeaderRules = (json) => {
+    try { return JSON.parse(json || '[]') }
+    catch { return [] }
+  }
+
   const handleOpenDrawer = (rule = null) => {
     setEditingRule(rule)
     if (rule) {
@@ -277,12 +296,14 @@ function Rules() {
       } else {
         setSelectedClusterBindings(rule.clusters || [])
         setRoutingForm({ ...EMPTY_ROUTING_FORM, ...rule, enabled: rule.enabled })
+        setLocalHeaderRules(parseHeaderRules(rule.response_header_rules))
       }
     } else {
       setFormType('domain_routing')
       setSelectedClusterBindings([])
       setRoutingForm(EMPTY_ROUTING_FORM)
       setRedirectForm(EMPTY_REDIRECT_FORM)
+      setLocalHeaderRules([])
     }
     setDrawerOpen(true)
   }
@@ -293,6 +314,7 @@ function Rules() {
     setRoutingForm(EMPTY_ROUTING_FORM)
     setRedirectForm(EMPTY_REDIRECT_FORM)
     setSelectedClusterBindings([])
+    setLocalHeaderRules([])
   }
 
   const handleRoutingChange = (f) => (e) => setRoutingForm(p => ({ ...p, [f]: e.target.value }))
@@ -315,6 +337,7 @@ function Rules() {
             ...routingForm,
             domain: routingForm.domain.trim(),
             clusters: selectedClusterBindings,
+            response_header_rules: JSON.stringify(localHeaderRules),
           }
 
       if (editingRule) {
@@ -609,6 +632,71 @@ function Rules() {
                       开启后 Edge 节点将跳过缓存，每次请求直接回源
                     </Typography>
                   </Box>
+                </Box>
+              </FormSection>
+              <Divider />
+              <FormSection title="响应头改写" optional>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {localHeaderRules.length === 0 && (
+                    <Typography variant="caption" color="text.disabled" sx={{ mb: 0.5 }}>
+                      尚未配置响应头改写规则
+                    </Typography>
+                  )}
+                  {localHeaderRules.map((rule, idx) => (
+                    <Box key={idx} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                      <TextField select size="small" sx={{ width: 110 }}
+                        value={rule.action} onChange={(e) => {
+                          const next = [...localHeaderRules]
+                          next[idx] = { ...next[idx], action: e.target.value }
+                          setLocalHeaderRules(next)
+                        }}>
+                        <MenuItem value="set">set</MenuItem>
+                        <MenuItem value="add">add</MenuItem>
+                        <MenuItem value="remove">remove</MenuItem>
+                      </TextField>
+                      <TextField size="small" sx={{ flex: 1 }} placeholder="Header 名称"
+                        value={rule.name} onChange={(e) => {
+                          const next = [...localHeaderRules]
+                          next[idx] = { ...next[idx], name: e.target.value }
+                          setLocalHeaderRules(next)
+                        }} />
+                      {rule.action !== 'remove' && (
+                        <TextField size="small" sx={{ flex: 1 }} placeholder="Header 值"
+                          value={rule.value || ''} onChange={(e) => {
+                            const next = [...localHeaderRules]
+                            next[idx] = { ...next[idx], value: e.target.value }
+                            setLocalHeaderRules(next)
+                          }} />
+                      )}
+                      <IconButton size="small" color="error"
+                        onClick={() => setLocalHeaderRules(p => p.filter((_, i) => i !== idx))}>
+                        <RemoveCircleOutlineIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  ))}
+                  <Button size="small" startIcon={<AddCircleOutlineIcon />}
+                    onClick={() => setLocalHeaderRules(p => [...p, { action: 'set', name: '', value: '' }])}
+                    sx={{ alignSelf: 'flex-start' }}>
+                    添加响应头规则
+                  </Button>
+                </Box>
+              </FormSection>
+              <Divider />
+              <FormSection title="Lua 脚本" optional>
+                <Box>
+                  <TextField fullWidth multiline rows={12}
+                    value={routingForm.lua_script}
+                    onChange={(e) => setRoutingForm(p => ({ ...p, lua_script: e.target.value }))}
+                    placeholder={`function transform(req, resp)
+    -- 在此编写改写逻辑
+    -- req.method, req.path, req.headers 只读
+    -- resp.status_code, resp.headers, resp.body 可读写
+    return resp
+end`}
+                    sx={{ '& .MuiInputBase-root': { fontFamily: 'monospace', fontSize: 13 } }} />
+                  <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                    Lua 脚本需要定义 <code>transform(req, resp)</code> 函数。保存时自动编译，编译失败会回显错误。
+                  </Typography>
                 </Box>
               </FormSection>
             </Stack>

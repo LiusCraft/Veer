@@ -9,14 +9,25 @@ import (
 	"sync"
 	"time"
 
+	lua "github.com/yuin/gopher-lua"
+
 	"veer/config"
 )
+
+type responseHeaderRule struct {
+	Action string `json:"action"`
+	Name   string `json:"name"`
+	Value  string `json:"value,omitempty"`
+}
 
 type domainRule struct {
 	originBaseURL        string
 	cacheTTLSeconds      *int
 	cacheControlOverride string
 	bypassCache          bool
+	responseHeaders      []responseHeaderRule
+	luaScript            string
+	luaProto             *lua.FunctionProto // compiled Lua, nil if no script
 }
 
 type ruleCache struct {
@@ -46,6 +57,7 @@ type EdgeServer struct {
 	cache     *TieredCache
 	ruleCache *ruleCache
 	client    *http.Client
+	luaPool   *lStatePool
 }
 
 func NewEdgeServer(cfg *config.EdgeConfig) *EdgeServer {
@@ -66,6 +78,7 @@ func NewEdgeServer(cfg *config.EdgeConfig) *EdgeServer {
 				return http.ErrUseLastResponse
 			},
 		},
+		luaPool: newLStatePool(),
 	}
 }
 
@@ -140,16 +153,17 @@ func (s *EdgeServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		defaultTTL = time.Duration(*rule.cacheTTLSeconds) * time.Second
 	}
 
-	if body, bodyLen, headers, statusCode, ok := s.cache.GetBodyReader(cacheKey); ok {
-		defer body.Close()
-		for k, v := range headers {
+	if entry, ok := s.cache.Get(cacheKey); ok {
+		entry = s.transformResponse(rule, r, entry)
+		for k, v := range entry.Headers {
 			w.Header()[k] = v
 		}
+		applyResponseHeaders(rule.responseHeaders, w)
 		w.Header().Set("X-Cache", "HIT")
 		w.Header().Set("X-Edge", s.cfg.Name)
-		w.WriteHeader(statusCode)
-		if r.Method == http.MethodGet && bodyLen > 0 {
-			io.CopyN(w, body, bodyLen)
+		w.WriteHeader(entry.StatusCode)
+		if r.Method == http.MethodGet && len(entry.Body) > 0 {
+			w.Write(entry.Body)
 		}
 		return
 	}
@@ -159,27 +173,31 @@ func (s *EdgeServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		if err == nil && newEntry.StatusCode == http.StatusNotModified {
 			staleEntry.ExpiresAt = time.Now().Add(parseCacheControlTTL(staleEntry.Headers, defaultTTL))
 			s.cache.Set(cacheKey, staleEntry)
-			for k, v := range staleEntry.Headers {
+			respEntry := s.transformResponse(rule, r, staleEntry)
+			for k, v := range respEntry.Headers {
 				w.Header()[k] = v
 			}
+			applyResponseHeaders(rule.responseHeaders, w)
 			w.Header().Set("X-Cache", "REVALIDATED")
 			w.Header().Set("X-Edge", s.cfg.Name)
-			w.WriteHeader(staleEntry.StatusCode)
+			w.WriteHeader(respEntry.StatusCode)
 			if r.Method == http.MethodGet {
-				w.Write(staleEntry.Body)
+				w.Write(respEntry.Body)
 			}
 			return
 		}
 		if err == nil && newEntry.StatusCode < 500 {
 			s.cache.Set(cacheKey, newEntry)
-			for k, v := range newEntry.Headers {
+			respEntry := s.transformResponse(rule, r, newEntry)
+			for k, v := range respEntry.Headers {
 				w.Header()[k] = v
 			}
+			applyResponseHeaders(rule.responseHeaders, w)
 			w.Header().Set("X-Cache", "MISS")
 			w.Header().Set("X-Edge", s.cfg.Name)
-			w.WriteHeader(newEntry.StatusCode)
+			w.WriteHeader(respEntry.StatusCode)
 			if r.Method == http.MethodGet {
-				w.Write(newEntry.Body)
+				w.Write(respEntry.Body)
 			}
 			return
 		}
@@ -194,9 +212,11 @@ func (s *EdgeServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf("Bad Gateway: %v", err), http.StatusBadGateway)
 			return
 		}
+		entry = s.transformResponse(rule, r, entry)
 		for k, v := range entry.Headers {
 			w.Header()[k] = v
 		}
+		applyResponseHeaders(rule.responseHeaders, w)
 		w.Header().Set("X-Cache", "BYPASS")
 		w.Header().Set("X-Edge", s.cfg.Name)
 		w.WriteHeader(entry.StatusCode)
@@ -224,9 +244,11 @@ func (s *EdgeServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		s.cache.Set(cacheKey, entry)
 	}
 
+	entry = s.transformResponse(rule, r, entry)
 	for k, v := range entry.Headers {
 		w.Header()[k] = v
 	}
+	applyResponseHeaders(rule.responseHeaders, w)
 	w.Header().Set("X-Cache", "MISS")
 	w.Header().Set("X-Edge", s.cfg.Name)
 	w.WriteHeader(entry.StatusCode)
@@ -249,6 +271,65 @@ func extractDomainAndPath(fullPath string) (domain, resourcePath string) {
 		resourcePath = "/"
 	}
 	return
+}
+
+func buildScriptReq(r *http.Request) *scriptReq {
+	headers := make(map[string]string)
+	for k := range r.Header {
+		headers[strings.ToLower(k)] = r.Header.Get(k)
+	}
+	return &scriptReq{
+		Method:  r.Method,
+		Path:    r.URL.Path,
+		Query:   r.URL.RawQuery,
+		Headers: headers,
+	}
+}
+
+func (s *EdgeServer) transformResponse(rule domainRule, r *http.Request, entry *CacheEntry) *CacheEntry {
+	if rule.luaProto == nil {
+		return entry
+	}
+	// Copy to avoid mutating the cached entry.
+	e := *entry
+	entry = &e
+
+	headers := make(map[string]string)
+	for k := range entry.Headers {
+		headers[strings.ToLower(k)] = entry.Headers.Get(k)
+	}
+
+	sReq := buildScriptReq(r)
+	sResp := &scriptResp{
+		StatusCode: entry.StatusCode,
+		Headers:    headers,
+		Body:       string(entry.Body),
+	}
+
+	se := &scriptEngine{proto: rule.luaProto}
+	applyLuaScript(se, s.luaPool, sReq, sResp, 0)
+
+	// Apply changes back
+	entry.StatusCode = sResp.StatusCode
+	entry.Body = []byte(sResp.Body)
+	entry.Headers = make(http.Header)
+	for k, v := range sResp.Headers {
+		entry.Headers.Set(k, v)
+	}
+	return entry
+}
+
+func applyResponseHeaders(rules []responseHeaderRule, w http.ResponseWriter) {
+	for _, h := range rules {
+		switch h.Action {
+		case "set":
+			w.Header().Set(h.Name, h.Value)
+		case "add":
+			w.Header().Add(h.Name, h.Value)
+		case "remove":
+			w.Header().Del(h.Name)
+		}
+	}
 }
 
 func (s *EdgeServer) fetchFromOrigin(originBaseURL, path string, staleEntry *CacheEntry) (*CacheEntry, error) {

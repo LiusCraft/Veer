@@ -180,6 +180,8 @@ func CreateRule(db *gorm.DB) gin.HandlerFunc {
 			CacheTTLSeconds      *int             `json:"cache_ttl_seconds"`
 			CacheControlOverride string           `json:"cache_control_override"`
 			BypassCache          bool             `json:"bypass_cache"`
+			ResponseHeaderRules  string           `json:"response_header_rules"`
+			LuaScript            string           `json:"lua_script"`
 			Clusters             []ClusterBinding `json:"clusters"`
 		}
 
@@ -241,6 +243,8 @@ func CreateRule(db *gorm.DB) gin.HandlerFunc {
 			rule.CacheTTLSeconds = body.CacheTTLSeconds
 			rule.CacheControlOverride = body.CacheControlOverride
 			rule.BypassCache = body.BypassCache
+			rule.ResponseHeaderRules = body.ResponseHeaderRules
+			rule.LuaScript = body.LuaScript
 		} else {
 			if body.MatchType == "" {
 				body.MatchType = "prefix"
@@ -326,6 +330,8 @@ func UpdateRule(db *gorm.DB) gin.HandlerFunc {
 			CacheTTLSeconds      *int             `json:"cache_ttl_seconds"`
 			CacheControlOverride *string          `json:"cache_control_override"`
 			BypassCache          *bool            `json:"bypass_cache"`
+			ResponseHeaderRules  *string          `json:"response_header_rules"`
+			LuaScript            *string          `json:"lua_script"`
 			Clusters             []ClusterBinding `json:"clusters"`
 		}
 
@@ -388,6 +394,12 @@ func UpdateRule(db *gorm.DB) gin.HandlerFunc {
 			}
 			if body.BypassCache != nil {
 				rule.BypassCache = *body.BypassCache
+			}
+			if body.ResponseHeaderRules != nil {
+				rule.ResponseHeaderRules = *body.ResponseHeaderRules
+			}
+			if body.LuaScript != nil {
+				rule.LuaScript = *body.LuaScript
 			}
 		} else {
 			if body.Domain != nil {
