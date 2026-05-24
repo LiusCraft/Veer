@@ -12,11 +12,16 @@ import (
 )
 
 type registerRequest struct {
-	Name        string `json:"name"`
-	Region      string `json:"region"`
-	PublicURL   string `json:"public_url"`
-	InternalURL string `json:"internal_url,omitempty"`
-	Secret      string `json:"secret"`
+	Name         string `json:"name"`
+	Region       string `json:"region"`
+	PublicURL    string `json:"public_url"`
+	InternalURL  string `json:"internal_url,omitempty"`
+	Secret       string `json:"secret"`
+	CPUCores     int    `json:"cpu_cores"`
+	MemoryMB     int64  `json:"memory_mb"`
+	DiskSizeMB   int64  `json:"disk_size_mb"`
+	UplinkMbps   int    `json:"uplink_mbps"`
+	DownlinkMbps int    `json:"downlink_mbps"`
 }
 
 type registerResponseData struct {
@@ -57,6 +62,8 @@ type heartbeatRequest struct {
 	LoadAvg          float64 `json:"load_avg"`
 	RequestCount1m   int64   `json:"request_count_1m"`
 	BandwidthBytes1m int64   `json:"bandwidth_bytes_1m"`
+	TxBytes1m        int64   `json:"tx_bytes_1m"`
+	RxBytes1m        int64   `json:"rx_bytes_1m"`
 }
 
 type managerClient struct {
@@ -82,6 +89,8 @@ func (mc *managerClient) sendHeartbeat(m systemMetrics) error {
 		MemUsage:  m.MemUsage,
 		DiskUsage: m.DiskUsage,
 		LoadAvg:   m.LoadAvg,
+		TxBytes1m: m.TxBytes,
+		RxBytes1m: m.RxBytes,
 	}
 
 	data, err := json.Marshal(body)
@@ -111,13 +120,18 @@ func (mc *managerClient) sendHeartbeat(m systemMetrics) error {
 	return nil
 }
 
-func (mc *managerClient) register(name, region, publicURL, internalURL string) (*registerResponseData, error) {
+func (mc *managerClient) register(name, region, publicURL, internalURL string, cpuCores int, memoryMB, diskSizeMB int64, uplinkMbps, downlinkMbps int) (*registerResponseData, error) {
 	reqBody := registerRequest{
-		Name:        name,
-		Region:      region,
-		PublicURL:   publicURL,
-		InternalURL: internalURL,
-		Secret:      mc.secret,
+		Name:         name,
+		Region:       region,
+		PublicURL:    publicURL,
+		InternalURL:  internalURL,
+		Secret:       mc.secret,
+		CPUCores:     cpuCores,
+		MemoryMB:     memoryMB,
+		DiskSizeMB:   diskSizeMB,
+		UplinkMbps:   uplinkMbps,
+		DownlinkMbps: downlinkMbps,
 	}
 
 	data, err := json.Marshal(reqBody)
@@ -183,7 +197,9 @@ func RegisterWithManager(cfg *config.EdgeConfig) error {
 	log.Printf("[edge] registering with manager at %s ...", cfg.Manager.URL)
 
 	mc := newManagerClient(cfg.Manager)
-	resp, err := mc.register(cfg.Name, cfg.Region, cfg.PublicURL, cfg.InternalURL)
+	hw := detectHardware(cfg.Cache.Disk.Path)
+	resp, err := mc.register(cfg.Name, cfg.Region, cfg.PublicURL, cfg.InternalURL,
+		hw.CPUCores, hw.MemoryMB, hw.DiskSizeMB, cfg.UplinkMbps, cfg.DownlinkMbps)
 	if err != nil {
 		return fmt.Errorf("registration failed: %w", err)
 	}

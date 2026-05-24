@@ -14,6 +14,7 @@ function StatusChip({ status, sx = {} }) {
     'round-robin': { label: '轮询', color: 'primary' },
     weighted: { label: '权重', color: 'secondary' },
     random: { label: '随机', color: 'warning' },
+    score: { label: '智能评分', color: 'info' },
   }
 
   const config = statusConfig[status] || { label: status, color: 'default' }

@@ -10,6 +10,7 @@ import (
 
 	"veer/models"
 
+	"github.com/spf13/viper"
 	"gorm.io/gorm"
 )
 
@@ -319,6 +320,8 @@ func selectNode(nodes []models.CdnNode, strategy string, ruleID uint) models.Cdn
 	switch strategy {
 	case "weighted":
 		return selectWeighted(nodes)
+	case "score":
+		return selectNodeByScore(nodes, GetScoreWeights())
 	case "random":
 		return nodes[rand.Intn(len(nodes))]
 	default:
@@ -326,6 +329,146 @@ func selectNode(nodes []models.CdnNode, strategy string, ruleID uint) models.Cdn
 		idx := atomic.AddInt64(counter, 1) - 1
 		return nodes[idx%int64(len(nodes))]
 	}
+}
+
+// ScoreWeights holds the weight coefficients for multi-metric scoring.
+type ScoreWeights struct {
+	Latency     float64
+	TxBandwidth float64
+	RxBandwidth float64
+	CPU         float64
+	Mem         float64
+	Weight      float64
+}
+
+// normalMinMax normalizes values to [0,1] where larger is better.
+// Returns 0.5 for all elements when all inputs are equal.
+func normalMinMax(vals []float64) []float64 {
+	n := len(vals)
+	result := make([]float64, n)
+	min, max := vals[0], vals[0]
+	for _, v := range vals {
+		if v < min {
+			min = v
+		}
+		if v > max {
+			max = v
+		}
+	}
+	if max == min {
+		for i := range result {
+			result[i] = 0.5
+		}
+		return result
+	}
+	for i, v := range vals {
+		result[i] = (v - min) / (max - min)
+	}
+	return result
+}
+
+// normalMinMaxInv normalizes inverse values to [0,1] where smaller is better.
+// Values <= 0 (unprobed/invalid) get the lowest score.
+func normalMinMaxInv(vals []float64) []float64 {
+	inv := make([]float64, len(vals))
+	for i, v := range vals {
+		if v <= 0 {
+			inv[i] = 0.0
+		} else {
+			inv[i] = 1.0 / v
+		}
+	}
+	return normalMinMax(inv)
+}
+
+// bandwidthScore applies piecewise penalty based on bandwidth utilization.
+// 0% → 1.0, 70% → 0.9, 90% → 0.2, 100% → 0.0, >100% → 0.0
+func bandwidthScore(util float64) float64 {
+	switch {
+	case util >= 1.0:
+		return 0.0
+	case util >= 0.9:
+		return (1.0 - util) * 2
+	case util >= 0.7:
+		return 0.9 - (util-0.7)/0.2*0.7
+	default:
+		return 1.0 - util/0.7*0.1
+	}
+}
+
+func calcBandwidthUtil(node models.CdnNode) (txUtil, rxUtil float64) {
+	txBps := float64(node.TxBytes1m) * 8 / 60
+	rxBps := float64(node.RxBytes1m) * 8 / 60
+	if node.UplinkMbps > 0 {
+		txUtil = txBps / (float64(node.UplinkMbps) * 1_000_000)
+	}
+	if node.DownlinkMbps > 0 {
+		rxUtil = rxBps / (float64(node.DownlinkMbps) * 1_000_000)
+	}
+	return
+}
+
+func selectNodeByScore(nodes []models.CdnNode, weights ScoreWeights) models.CdnNode {
+	if len(nodes) == 0 {
+		return models.CdnNode{}
+	}
+	if len(nodes) == 1 {
+		return nodes[0]
+	}
+
+	n := len(nodes)
+	latencies := make([]float64, n)
+	txUtils := make([]float64, n)
+	rxUtils := make([]float64, n)
+	cpus := make([]float64, n)
+	mems := make([]float64, n)
+	weightVals := make([]float64, n)
+
+	for i, node := range nodes {
+		latencies[i] = float64(node.Latency)
+		txUtils[i], rxUtils[i] = calcBandwidthUtil(node)
+		cpus[i] = node.CPUUsage
+		mems[i] = node.MemUsage
+		weightVals[i] = float64(node.Weight)
+	}
+
+	normLat := normalMinMaxInv(latencies)
+	normCPU := normalMinMaxInv(cpus)
+	normMem := normalMinMaxInv(mems)
+	normW := normalMinMax(weightVals)
+
+	bestScore := -1.0
+	bestIdx := 0
+	for i := range nodes {
+		score := weights.Latency*normLat[i] +
+			weights.TxBandwidth*bandwidthScore(txUtils[i]) +
+			weights.RxBandwidth*bandwidthScore(rxUtils[i]) +
+			weights.CPU*normCPU[i] +
+			weights.Mem*normMem[i] +
+			weights.Weight*normW[i]
+		if score > bestScore {
+			bestScore = score
+			bestIdx = i
+		}
+	}
+	return nodes[bestIdx]
+}
+
+// GetScoreWeights returns the score weights from Viper config (env var > config.yaml > default).
+func GetScoreWeights() ScoreWeights {
+	return ScoreWeights{
+		Latency:     getScoreWeight("latency", 0.35),
+		TxBandwidth: getScoreWeight("tx_bandwidth", 0.15),
+		RxBandwidth: getScoreWeight("rx_bandwidth", 0.15),
+		CPU:         getScoreWeight("cpu", 0.20),
+		Mem:         getScoreWeight("mem", 0.10),
+		Weight:      getScoreWeight("weight", 0.05),
+	}
+}
+
+func getScoreWeight(name string, defaultVal float64) float64 {
+	key := "scheduling.score_weights." + name
+	return viper.GetFloat64(key)
 }
 
 func selectWeighted(nodes []models.CdnNode) models.CdnNode {

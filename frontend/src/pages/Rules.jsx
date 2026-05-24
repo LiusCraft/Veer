@@ -28,8 +28,8 @@ import { rulesApi, clustersApi } from '../api/index.js'
 import { exportToCSV } from '../utils/csv.js'
 
 const MATCH_TYPE_LABELS = { prefix: '前缀匹配', exact: '精确匹配', regex: '正则匹配' }
-const STRATEGY_LABELS = { 'round-robin': '轮询', weighted: '权重', random: '随机' }
-const STRATEGY_COLORS = { 'round-robin': 'info', weighted: 'warning', random: 'success' }
+const STRATEGY_LABELS = { 'round-robin': '轮询', weighted: '权重', random: '随机', score: '智能评分' }
+const STRATEGY_COLORS = { 'round-robin': 'info', weighted: 'warning', random: 'success', score: 'primary' }
 const RULE_TYPE_META = {
   domain_routing: { label: '域名路由', icon: <AltRouteIcon sx={{ fontSize: 15 }} />, color: 'primary' },
   url_redirect: { label: 'URL 重定向', icon: <HttpIcon sx={{ fontSize: 15 }} />, color: 'info' },
@@ -594,6 +594,7 @@ function Rules() {
                   <MenuItem value="round-robin">轮询 — 依次将请求分发给各节点</MenuItem>
                   <MenuItem value="weighted">权重 — 按节点权重比例分发</MenuItem>
                   <MenuItem value="random">随机 — 随机选择一个节点</MenuItem>
+                  <MenuItem value="score">智能评分 — 综合延迟/带宽/负载多指标打分</MenuItem>
                 </TextField>
                 <FormControl fullWidth size="small">
                   <InputLabel>关联集群</InputLabel>

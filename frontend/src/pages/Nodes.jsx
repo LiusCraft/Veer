@@ -46,10 +46,17 @@ import useTableSearch from '../hooks/useTableSearch.js'
 import { exportToCSV } from '../utils/csv.js'
 import { formatRelativeTime } from '../utils/time.js'
 
+function calcBandwidthUtil(bytesPerMin, capacityMbps) {
+  if (!bytesPerMin || !capacityMbps || capacityMbps <= 0) return '0.0'
+  const bps = bytesPerMin * 8 / 60
+  return ((bps / (capacityMbps * 1_000_000)) * 100).toFixed(1)
+}
+
 const EMPTY_FORM = {
   name: '', url: '', weight: 1, region: '', status: 'active',
   cluster_ids: [], ip: '', isp: '', provider: '', node_type: 'edge',
-  bandwidth_mbps: 1000, max_connections: 10000,
+  bandwidth_mbps: 1000, uplink_mbps: 1000, downlink_mbps: 1000,
+  max_connections: 10000,
 }
 
 /**
@@ -121,7 +128,8 @@ function Nodes() {
         region: node.region, status: node.status,
         cluster_ids: node.cluster_ids || [], ip: node.ip || '', isp: node.isp || '',
         provider: node.provider || '', node_type: node.node_type || 'edge',
-        bandwidth_mbps: node.bandwidth_mbps || 1000, max_connections: node.max_connections || 10000,
+        bandwidth_mbps: node.bandwidth_mbps || 1000, uplink_mbps: node.uplink_mbps || 1000,
+        downlink_mbps: node.downlink_mbps || 1000, max_connections: node.max_connections || 10000,
       })
     } else {
       setEditingNode(null)
@@ -251,7 +259,12 @@ function Nodes() {
       { key: 'node_type', label: '节点类型' },
       { key: 'cluster_ids', label: '集群ID' },
       { key: 'weight', label: '权重' },
-      { key: 'bandwidth_mbps', label: '带宽' },
+      { key: 'bandwidth_mbps', label: '带宽(Mbps)' },
+      { key: 'uplink_mbps', label: '上行(Mbps)' },
+      { key: 'downlink_mbps', label: '下行(Mbps)' },
+      { key: 'cpu_cores', label: 'CPU核数' },
+      { key: 'tx_bytes_1m', label: '上行流量(B/min)' },
+      { key: 'rx_bytes_1m', label: '下行流量(B/min)' },
       { key: 'cpu_usage', label: 'CPU(%)' },
       { key: 'status', label: '状态' },
       { key: 'latency', label: '延迟(ms)' },
@@ -609,8 +622,14 @@ function Nodes() {
               <MenuItem value="edge">Edge 缓存节点</MenuItem>
               <MenuItem value="scheduler">Scheduler 调度节点</MenuItem>
             </TextField>
-            <TextField label="带宽上限 (Mbps)" type="number" value={form.bandwidth_mbps}
+            <TextField label="总带宽上限 (Mbps)" type="number" value={form.bandwidth_mbps}
               onChange={handleFormChange('bandwidth_mbps')} fullWidth
+              inputProps={{ min: 1 }} />
+            <TextField label="上行带宽 (Mbps)" type="number" value={form.uplink_mbps}
+              onChange={handleFormChange('uplink_mbps')} fullWidth
+              inputProps={{ min: 1 }} />
+            <TextField label="下行带宽 (Mbps)" type="number" value={form.downlink_mbps}
+              onChange={handleFormChange('downlink_mbps')} fullWidth
               inputProps={{ min: 1 }} />
             <TextField label="最大连接数" type="number" value={form.max_connections}
               onChange={handleFormChange('max_connections')} fullWidth
@@ -702,6 +721,29 @@ function Nodes() {
                 <Typography variant="body2">
                   {detailNode.last_heartbeat ? formatRelativeTime(detailNode.last_heartbeat) : '从未上报'}
                 </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">带宽</Typography>
+                <Typography variant="body2">上行: {detailNode.uplink_mbps || '-'} Mbps
+                  {detailNode.tx_bytes_1m > 0 && (
+                    <Typography variant="caption" color="text.secondary">
+                      {' '}(实时 {calcBandwidthUtil(detailNode.tx_bytes_1m, detailNode.uplink_mbps)}%)
+                    </Typography>
+                  )}
+                </Typography>
+                <Typography variant="body2">下行: {detailNode.downlink_mbps || '-'} Mbps
+                  {detailNode.rx_bytes_1m > 0 && (
+                    <Typography variant="caption" color="text.secondary">
+                      {' '}(实时 {calcBandwidthUtil(detailNode.rx_bytes_1m, detailNode.downlink_mbps)}%)
+                    </Typography>
+                  )}
+                </Typography>
+              </Box>
+              <Box>
+                <Typography variant="caption" color="text.secondary">硬件</Typography>
+                <Typography variant="body2">CPU: {detailNode.cpu_cores || '-'} 核</Typography>
+                <Typography variant="body2">内存: {detailNode.memory_mb ? `${(detailNode.memory_mb / 1024).toFixed(0)} GB` : '-'}</Typography>
+                <Typography variant="body2">磁盘: {detailNode.disk_size_mb ? `${(detailNode.disk_size_mb / 1024).toFixed(0)} GB` : '-'}</Typography>
               </Box>
               <Box>
                 <Typography variant="caption" color="text.secondary">配置</Typography>

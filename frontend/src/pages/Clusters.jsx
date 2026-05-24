@@ -35,6 +35,7 @@ const STRATEGIES = [
   { value: 'round-robin', label: '轮询' },
   { value: 'weighted', label: '权重' },
   { value: 'random', label: '随机' },
+  { value: 'score', label: '智能评分' },
 ]
 
 function Clusters() {
@@ -292,7 +293,7 @@ function Clusters() {
                         </Typography>
                       </TableCell>
                       <TableCell align="center">
-                        <Chip label={cluster.strategy === 'round-robin' ? '轮询' : cluster.strategy === 'weighted' ? '权重' : '随机'}
+                        <Chip label={cluster.strategy === 'round-robin' ? '轮询' : cluster.strategy === 'weighted' ? '权重' : cluster.strategy === 'score' ? '智能评分' : '随机'}
                           size="small" color="info" variant="outlined" />
                       </TableCell>
                       <TableCell align="center">

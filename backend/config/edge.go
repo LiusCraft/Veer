@@ -52,6 +52,8 @@ type EdgeConfig struct {
 	Region        string            `mapstructure:"region" default:"default"`
 	PublicURL     string            `mapstructure:"public_url" default:"http://localhost:8082"`
 	InternalURL   string            `mapstructure:"internal_url" default:""`
+	UplinkMbps    int               `mapstructure:"uplink_mbps" default:"1000"`
+	DownlinkMbps  int               `mapstructure:"downlink_mbps" default:"1000"`
 	Manager       EdgeManagerConfig `mapstructure:"manager"`
 	OriginBaseURL string            `mapstructure:"origin_base_url" default:"http://origin:80"`
 	Cache         EdgeCacheConfig   `mapstructure:"cache"`
