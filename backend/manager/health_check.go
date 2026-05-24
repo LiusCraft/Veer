@@ -204,8 +204,8 @@ func (m *HealthCheckManager) updateClusterStatus() {
 			Total  int
 			Active int
 		}
-		m.db.Model(&models.CdnNode{}).Where("cluster_id = ?", cl.ID).Select("COUNT(*) as total").Scan(&stats)
-		m.db.Model(&models.CdnNode{}).Where("cluster_id = ? AND status = 'active'", cl.ID).Select("COUNT(*) as active").Scan(&stats)
+		m.db.Raw("SELECT COUNT(*) as total FROM node_clusters WHERE cluster_id = ?", cl.ID).Scan(&stats)
+		m.db.Raw("SELECT COUNT(*) as active FROM node_clusters nc JOIN cdn_nodes n ON nc.node_id = n.id WHERE nc.cluster_id = ? AND n.status = 'active'", cl.ID).Scan(&stats)
 
 		if stats.Total == 0 {
 			continue

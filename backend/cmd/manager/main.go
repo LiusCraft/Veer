@@ -56,6 +56,31 @@ func main() {
 		log.Printf("Created default admin user: %s", cfg.Admin.Username)
 	}
 
+	var clusterCount int64
+	db.Model(&models.Cluster{}).Count(&clusterCount)
+	if clusterCount == 0 {
+		defaultCluster := models.Cluster{
+			Name:        "default-cluster",
+			Description: "Default cluster created on first startup",
+			Strategy:    "round-robin",
+			Status:      "active",
+		}
+		if err := db.Create(&defaultCluster).Error; err != nil {
+			log.Fatalf("Failed to create default cluster: %v", err)
+		}
+		log.Printf("Created default cluster: %s", defaultCluster.Name)
+
+		var orphanNodes []models.CdnNode
+		db.Where("id NOT IN (SELECT node_id FROM node_clusters)").Find(&orphanNodes)
+		for i := range orphanNodes {
+			db.Create(&models.NodeCluster{NodeID: orphanNodes[i].ID, ClusterID: defaultCluster.ID})
+			log.Printf("Assigned node %q (id=%d) to default cluster %q", orphanNodes[i].Name, orphanNodes[i].ID, defaultCluster.Name)
+		}
+		if len(orphanNodes) > 0 {
+			log.Printf("Assigned %d unassigned node(s) to default cluster", len(orphanNodes))
+		}
+	}
+
 	var hcm *manager.HealthCheckManager
 	if cfg.HealthCheck.Enabled {
 		hcm = manager.NewHealthCheckManager(db, &cfg.HealthCheck, cfg.Edge.Secret)

@@ -84,6 +84,15 @@ func RegisterEdgeHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFunc
 					c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to register node"})
 					return
 				}
+
+				var cluster models.Cluster
+				if err := db.Where("status = ?", "active").First(&cluster).Error; err == nil {
+					var count int64
+					db.Model(&models.NodeCluster{}).Where("node_id = ?", node.ID).Count(&count)
+					if count == 0 {
+						db.Create(&models.NodeCluster{NodeID: node.ID, ClusterID: cluster.ID})
+					}
+				}
 			} else {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": "database error"})
 				return
