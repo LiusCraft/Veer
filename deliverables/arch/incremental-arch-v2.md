@@ -237,7 +237,7 @@ type AdminUser struct {
 
 | 路径模式 | 保护状态 | 说明 |
 |----------|----------|------|
-| `GET /r/:ruleKey/*path` | 否 | 302 跳转公开访问 |
+| `/*` (scheduler 全路径匹配) | 否 | 基于 Host 头匹配规则，302 跳转公开访问 |
 | `GET /api/stats/overview` | 是 | 需要 JWT |
 | `GET /api/nodes` | 是 | 需要 JWT |
 | `POST /api/auth/login` | 否 | 登录接口公开 |
@@ -265,55 +265,60 @@ X-RateLimit-Reset: 1715688000
 
 ## 5. 程序调用流程
 
-### 5.1 带域名匹配 + 路径透传的 302 跳转流程
+### 5.1 基于 Host 头匹配 + 集群调度的 302 跳转流程
+
+```
+用户请求入口：
+  管理员域名（如 admin.veer.local）→ nginx → manager:8080（前端 + API）
+  CDN 域名（如 cdn.example.com） → nginx → scheduler:8081（302 调度）
+                             （默认 server block 捕获未知域名）
+```
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Gin as Gin Router
-    participant Redirect as RedirectHandler
+    participant Nginx as Nginx (web:80)
+    participant Sched as Scheduler (catch-all NoRoute)
+    participant Cache as RuleCache
     participant DB as SQLite DB
-    participant Node as Selected Node
-    participant Logger as AccessLogger
+    participant Node as Selected Edge Node
 
-    Client->>Gin: GET /r/video/images/logo.png<br/>Host: cdn.example.com
+    Client->>Nginx: GET /video/file.mp4<br/>Host: cdn.example.com
 
-    Gin->>Redirect: RedirectHandler(c, db)
+    Note over Nginx: server_name 不匹配 admin 域名<br/>默认 server block 透传
 
-    Note over Redirect: 1. 提取域名和路径
-    Note over Redirect: ruleKey = "video"<br/>domain = "cdn.example.com"<br/>path = "images/logo.png"
+    Nginx->>Sched: GET /video/file.mp4<br/>X-Forwarded-Host: cdn.example.com
 
-    Redirect->>DB: SELECT * FROM redirect_rules<br/>WHERE key = ? AND (domain = ? OR domain = '')<br/>ORDER BY domain DESC<br/>LIMIT 1
+    Sched->>Sched: 提取 Host（X-Forwarded-Host 优先）
+    Sched->>Cache: Lookup("cdn.example.com")
 
-    DB-->>Redirect: RedirectRule{domain: "cdn.example.com", ...}
+    Cache-->>Sched: [RedirectRule{domain_routing, ...}]
 
-    Note over Redirect: 2. 解析 NodeIDs，查询活跃节点
+    Note over Sched: 遍历规则，匹配第一个 enabled 规则
 
-    Redirect->>DB: SELECT * FROM cdn_nodes<br/>WHERE id IN (1,2,3) AND status = 'active'
+    alt domain_routing 类型
+        Sched->>Cache: selectNodeForRule(ruleID, strategy, region, isp)
+        Cache-->>Sched: Selected Node (按 cluster priority/weight/strategy)
 
-    DB-->>Redirect: [CdnNode, CdnNode]
+        Note over Sched: 构造目标 URL:<br/>NodeURL + "/" + host + "/" + remainingPath
 
-    Note over Redirect: 3. 按策略选择节点（round-robin/weighted/random）
+        Sched->>DB: 异步 INSERT access_logs
+        Sched->>DB: UPDATE hit_count += 1
 
-    alt weighted strategy
-        Redirect->>Redirect: selectWeighted(nodes)
-    else round-robin strategy
-        Redirect->>Redirect: selectRoundRobin(nodes, ruleID)
-    else random strategy
-        Redirect->>Redirect: selectRandom(nodes)
+        Sched->>Client: 302 Found<br/>Location: https://edge-1.example.com/cdn.example.com/video/file.mp4<br/>Cache-Control: no-cache, no-store, must-revalidate
+
+    else url_redirect 类型
+        Note over Sched: matchPath(sourcePath, requestPath, matchType)
+        alt 匹配成功
+            Sched->>Sched: resolveTargetPath(tmpl, requestPath, sourcePrefix)
+            Sched->>DB: 异步 INSERT access_logs
+            Sched->>Client: 301/302 → targetHost + targetPath
+        else 不匹配
+            Sched->>Sched: 继续下一条规则
+        end
+    else 无匹配规则
+        Sched->>Client: 404 {"error": "no rule found for domain: cdn.example.com"}
     end
-
-    Redirect-->>Node: Selected Node
-
-    Note over Redirect: 4. 拼接目标 URL: NodeURL + "/" + path<br/>https://cdn-east.aliyun.com + /images/logo.png<br/>= https://cdn-east.aliyun.com/images/logo.png
-
-    Redirect->>Logger: 异步记录 AccessLog<br/>(RuleKey, Domain, Path, TargetURL, ClientIP, ...)
-
-    Logger->>DB: INSERT INTO access_logs (...)
-
-    Note over Redirect: 5. 设置缓存控制头
-
-    Redirect->>Client: 302 Found<br/>Location: https://cdn-east.aliyun.com/images/logo.png<br/>Cache-Control: no-cache, no-store, must-revalidate<br/>Vary: Host
 ```
 
 ### 5.2 JWT 登录 + 请求认证流程
