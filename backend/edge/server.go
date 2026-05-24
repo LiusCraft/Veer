@@ -26,8 +26,12 @@ type domainRule struct {
 	cacheControlOverride string
 	bypassCache          bool
 	responseHeaders      []responseHeaderRule
+	requestHeaders       []responseHeaderRule
+	rewriteFrom          string
+	rewriteTo            string
 	luaScript            string
 	luaProto             *lua.FunctionProto // compiled Lua, nil if no script
+	scriptTimeoutMs      *int               // nil means use default (500ms)
 }
 
 type ruleCache struct {
@@ -146,6 +150,12 @@ func (s *EdgeServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Apply path rewrite before origin fetch (cache key uses original path).
+	requestPath := resourcePath
+	if rule.rewriteFrom != "" && strings.HasPrefix(requestPath, rule.rewriteFrom) {
+		requestPath = rule.rewriteTo + strings.TrimPrefix(requestPath, rule.rewriteFrom)
+	}
+
 	cacheKey := domain + ":" + resourcePath
 
 	defaultTTL := time.Duration(s.cfg.Cache.TTLSeconds) * time.Second
@@ -169,7 +179,7 @@ func (s *EdgeServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if staleEntry, ok := s.cache.GetStale(cacheKey); ok {
-		newEntry, err := s.fetchFromOrigin(rule.originBaseURL, resourcePath, staleEntry)
+		newEntry, err := s.fetchFromOrigin(rule.originBaseURL, requestPath, staleEntry, rule.requestHeaders)
 		if err == nil && newEntry.StatusCode == http.StatusNotModified {
 			staleEntry.ExpiresAt = time.Now().Add(parseCacheControlTTL(staleEntry.Headers, defaultTTL))
 			s.cache.Set(cacheKey, staleEntry)
@@ -204,7 +214,7 @@ func (s *EdgeServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if rule.bypassCache {
-		entry, err := s.fetchFromOrigin(rule.originBaseURL, resourcePath, nil)
+		entry, err := s.fetchFromOrigin(rule.originBaseURL, requestPath, nil, rule.requestHeaders)
 		if err != nil {
 			log.Printf("[edge] origin fetch failed: path=%s err=%v", resourcePath, err)
 			w.Header().Set("X-Cache", "BYPASS")
@@ -226,7 +236,7 @@ func (s *EdgeServer) proxyHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entry, err := s.fetchFromOrigin(rule.originBaseURL, resourcePath, nil)
+	entry, err := s.fetchFromOrigin(rule.originBaseURL, requestPath, nil, rule.requestHeaders)
 	if err != nil {
 		log.Printf("[edge] origin fetch failed: path=%s err=%v", resourcePath, err)
 		w.Header().Set("X-Cache", "ERROR")
@@ -307,7 +317,11 @@ func (s *EdgeServer) transformResponse(rule domainRule, r *http.Request, entry *
 	}
 
 	se := &scriptEngine{proto: rule.luaProto}
-	applyLuaScript(se, s.luaPool, sReq, sResp, 0)
+	timeout := time.Duration(defaultScriptTimeout)
+	if rule.scriptTimeoutMs != nil && *rule.scriptTimeoutMs > 0 {
+		timeout = time.Duration(*rule.scriptTimeoutMs) * time.Millisecond
+	}
+	applyLuaScript(se, s.luaPool, sReq, sResp, timeout)
 
 	// Apply changes back
 	entry.StatusCode = sResp.StatusCode
@@ -332,13 +346,28 @@ func applyResponseHeaders(rules []responseHeaderRule, w http.ResponseWriter) {
 	}
 }
 
-func (s *EdgeServer) fetchFromOrigin(originBaseURL, path string, staleEntry *CacheEntry) (*CacheEntry, error) {
+func applyRequestHeaders(rules []responseHeaderRule, req *http.Request) {
+	for _, h := range rules {
+		switch h.Action {
+		case "set":
+			req.Header.Set(h.Name, h.Value)
+		case "add":
+			req.Header.Add(h.Name, h.Value)
+		case "remove":
+			req.Header.Del(h.Name)
+		}
+	}
+}
+
+func (s *EdgeServer) fetchFromOrigin(originBaseURL, path string, staleEntry *CacheEntry, requestHeaders []responseHeaderRule) (*CacheEntry, error) {
 	targetURL := strings.TrimRight(originBaseURL, "/") + path
 
 	req, err := http.NewRequest("GET", targetURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
+
+	applyRequestHeaders(requestHeaders, req)
 
 	if staleEntry != nil {
 		if etag := staleEntry.Headers.Get("ETag"); etag != "" {

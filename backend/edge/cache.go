@@ -542,6 +542,9 @@ func (tc *TieredCache) rebuildActiveIndex(f *os.File) {
 		if totalSize <= EntryHeaderSize {
 			break
 		}
+		if totalSize > 100*1024*1024 { // 100MB per-entry safety limit
+			break
+		}
 
 		entry := make([]byte, totalSize)
 		if _, err := f.ReadAt(entry, offset); err != nil {

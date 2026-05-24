@@ -39,7 +39,11 @@ const EMPTY_ROUTING_FORM = {
   name: '', domain: '', description: '', strategy: 'round-robin',
   origin_base_url: '', enabled: true,
   response_header_rules: '',
+  request_header_rules: '',
+  rewrite_from: '',
+  rewrite_to: '',
   lua_script: '',
+  script_timeout_ms: null,
 }
 const EMPTY_REDIRECT_FORM = {
   name: '', domain: '', description: '',
@@ -168,7 +172,15 @@ function RoutingRulePreview({ rule, clusters: allClusters }) {
               color="error" variant="outlined" sx={{ height: 20, fontSize: 10, '& .MuiChip-icon': { fontSize: 11 } }} />
           )}
           {rule.response_header_rules && rule.response_header_rules !== '[]' && (
-            <Chip label="头改写" size="small" color="success" variant="outlined"
+            <Chip label="响应头改写" size="small" color="success" variant="outlined"
+              sx={{ height: 20, fontSize: 10 }} />
+          )}
+          {rule.request_header_rules && rule.request_header_rules !== '[]' && (
+            <Chip label="请求头改写" size="small" color="info" variant="outlined"
+              sx={{ height: 20, fontSize: 10 }} />
+          )}
+          {(rule.rewrite_from || rule.rewrite_to) && (
+            <Chip label="路径改写" size="small" color="primary" variant="outlined"
               sx={{ height: 20, fontSize: 10 }} />
           )}
           {rule.lua_script && (
@@ -250,6 +262,7 @@ function Rules() {
   const [selectMode, setSelectMode] = useState(false)
   const [selected, setSelected] = useState([])
   const [localHeaderRules, setLocalHeaderRules] = useState([])
+  const [localRequestHeaders, setLocalRequestHeaders] = useState([])
 
   const loadData = useCallback(async () => {
     setLoading(true)
@@ -297,6 +310,7 @@ function Rules() {
         setSelectedClusterBindings(rule.clusters || [])
         setRoutingForm({ ...EMPTY_ROUTING_FORM, ...rule, enabled: rule.enabled })
         setLocalHeaderRules(parseHeaderRules(rule.response_header_rules))
+        setLocalRequestHeaders(parseHeaderRules(rule.request_header_rules))
       }
     } else {
       setFormType('domain_routing')
@@ -315,6 +329,7 @@ function Rules() {
     setRedirectForm(EMPTY_REDIRECT_FORM)
     setSelectedClusterBindings([])
     setLocalHeaderRules([])
+    setLocalRequestHeaders([])
   }
 
   const handleRoutingChange = (f) => (e) => setRoutingForm(p => ({ ...p, [f]: e.target.value }))
@@ -338,6 +353,7 @@ function Rules() {
             domain: routingForm.domain.trim(),
             clusters: selectedClusterBindings,
             response_header_rules: JSON.stringify(localHeaderRules),
+            request_header_rules: JSON.stringify(localRequestHeaders),
           }
 
       if (editingRule) {
@@ -682,6 +698,68 @@ function Rules() {
                 </Box>
               </FormSection>
               <Divider />
+              <FormSection title="请求头改写" optional>
+                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                  {localRequestHeaders.length === 0 && (
+                    <Typography variant="caption" color="text.disabled" sx={{ mb: 0.5 }}>
+                      尚未配置请求头改写规则（回源时生效）
+                    </Typography>
+                  )}
+                  {localRequestHeaders.map((rule, idx) => (
+                    <Box key={idx} sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                      <TextField select size="small" sx={{ width: 110 }}
+                        value={rule.action} onChange={(e) => {
+                          const next = [...localRequestHeaders]
+                          next[idx] = { ...next[idx], action: e.target.value }
+                          setLocalRequestHeaders(next)
+                        }}>
+                        <MenuItem value="set">set</MenuItem>
+                        <MenuItem value="add">add</MenuItem>
+                        <MenuItem value="remove">remove</MenuItem>
+                      </TextField>
+                      <TextField size="small" sx={{ flex: 1 }} placeholder="Header 名称"
+                        value={rule.name} onChange={(e) => {
+                          const next = [...localRequestHeaders]
+                          next[idx] = { ...next[idx], name: e.target.value }
+                          setLocalRequestHeaders(next)
+                        }} />
+                      {rule.action !== 'remove' && (
+                        <TextField size="small" sx={{ flex: 1 }} placeholder="Header 值"
+                          value={rule.value || ''} onChange={(e) => {
+                            const next = [...localRequestHeaders]
+                            next[idx] = { ...next[idx], value: e.target.value }
+                            setLocalRequestHeaders(next)
+                          }} />
+                      )}
+                      <IconButton size="small" color="error"
+                        onClick={() => setLocalRequestHeaders(p => p.filter((_, i) => i !== idx))}>
+                        <RemoveCircleOutlineIcon fontSize="small" />
+                      </IconButton>
+                    </Box>
+                  ))}
+                  <Button size="small" startIcon={<AddCircleOutlineIcon />}
+                    onClick={() => setLocalRequestHeaders(p => [...p, { action: 'set', name: '', value: '' }])}
+                    sx={{ alignSelf: 'flex-start' }}>
+                    添加请求头规则
+                  </Button>
+                </Box>
+              </FormSection>
+              <Divider />
+              <FormSection title="路径改写" optional>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <TextField label="匹配前缀" value={routingForm.rewrite_from}
+                    onChange={handleRoutingChange('rewrite_from')} size="small" sx={{ flex: 1, minWidth: 180 }}
+                    placeholder="例如：/api/v1" helperText="请求路径以此为前缀时触发改写" />
+                  <ArrowForwardIcon sx={{ color: 'text.disabled' }} />
+                  <TextField label="替换为" value={routingForm.rewrite_to}
+                    onChange={handleRoutingChange('rewrite_to')} size="small" sx={{ flex: 1, minWidth: 180 }}
+                    placeholder="例如：/api/v2" helperText="将匹配的前缀替换为此路径" />
+                </Box>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
+                  仅影响回源请求路径，不影响缓存键。若留空则不改写。
+                </Typography>
+              </FormSection>
+              <Divider />
               <FormSection title="Lua 脚本" optional>
                 <Box>
                   <TextField fullWidth multiline rows={12}
@@ -697,6 +775,11 @@ end`}
                   <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5, display: 'block' }}>
                     Lua 脚本需要定义 <code>transform(req, resp)</code> 函数。保存时自动编译，编译失败会回显错误。
                   </Typography>
+                  <TextField label="脚本超时（毫秒）" type="number" value={routingForm.script_timeout_ms ?? ''}
+                    onChange={e => setRoutingForm(p => ({ ...p, script_timeout_ms: e.target.value === '' ? null : Number(e.target.value) }))}
+                    size="small" sx={{ mt: 1.5, maxWidth: 240 }}
+                    placeholder="500（默认）"
+                    helperText="Lua 脚本执行超时，留空使用系统默认值 500ms" />
                 </Box>
               </FormSection>
             </Stack>

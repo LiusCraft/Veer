@@ -25,7 +25,11 @@ type EdgeRule struct {
 	CacheControlOverride string                `json:"cache_control_override,omitempty"`
 	BypassCache          bool                  `json:"bypass_cache"`
 	ResponseHeaders      []edgeResponseHeaders `json:"response_headers,omitempty"`
+	RequestHeaders       []edgeResponseHeaders `json:"request_headers,omitempty"`
+	RewriteFrom          string                `json:"rewrite_from,omitempty"`
+	RewriteTo            string                `json:"rewrite_to,omitempty"`
 	LuaScript            string                `json:"lua_script,omitempty"`
+	ScriptTimeoutMs      *int                  `json:"script_timeout_ms,omitempty"`
 }
 
 type EdgeRegisterRequest struct {
@@ -152,6 +156,13 @@ func ListEdgeRulesHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFun
 						r.ID, r.Domain, err)
 				}
 			}
+			var reqHeaders []edgeResponseHeaders
+			if r.RequestHeaderRules != "" {
+				if err := json.Unmarshal([]byte(r.RequestHeaderRules), &reqHeaders); err != nil {
+					log.Printf("[manager] failed to parse request_header_rules for rule %d (domain=%s): %v",
+						r.ID, r.Domain, err)
+				}
+			}
 			edgeRules = append(edgeRules, EdgeRule{
 				Domain:               r.Domain,
 				OriginBaseURL:        r.OriginBaseURL,
@@ -159,7 +170,11 @@ func ListEdgeRulesHandler(db *gorm.DB, cfg *config.ManagerConfig) gin.HandlerFun
 				CacheControlOverride: r.CacheControlOverride,
 				BypassCache:          r.BypassCache,
 				ResponseHeaders:      respHeaders,
+				RequestHeaders:       reqHeaders,
+				RewriteFrom:          r.RewriteFrom,
+				RewriteTo:            r.RewriteTo,
 				LuaScript:            r.LuaScript,
+				ScriptTimeoutMs:      r.ScriptTimeoutMs,
 			})
 		}
 

@@ -38,7 +38,11 @@ type rulesResponseData struct {
 	CacheControlOverride string               `json:"cache_control_override,omitempty"`
 	BypassCache          bool                 `json:"bypass_cache"`
 	ResponseHeaders      []responseHeaderRule `json:"response_headers,omitempty"`
+	RequestHeaders       []responseHeaderRule `json:"request_headers,omitempty"`
+	RewriteFrom          string               `json:"rewrite_from,omitempty"`
+	RewriteTo            string               `json:"rewrite_to,omitempty"`
 	LuaScript            string               `json:"lua_script,omitempty"`
+	ScriptTimeoutMs      *int                 `json:"script_timeout_ms,omitempty"`
 }
 
 type rulesResponse struct {
@@ -224,7 +228,11 @@ func SyncRules(srv *EdgeServer) error {
 			cacheControlOverride: r.CacheControlOverride,
 			bypassCache:          r.BypassCache,
 			responseHeaders:      r.ResponseHeaders,
+			requestHeaders:       r.RequestHeaders,
+			rewriteFrom:          r.RewriteFrom,
+			rewriteTo:            r.RewriteTo,
 			luaScript:            r.LuaScript,
+			scriptTimeoutMs:      r.ScriptTimeoutMs,
 		}
 		if r.LuaScript != "" {
 			se := NewScriptEngine(r.LuaScript)

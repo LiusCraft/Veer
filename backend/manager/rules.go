@@ -1,7 +1,6 @@
 package manager
 
 import (
-	"encoding/json"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -43,20 +42,6 @@ func validateStrategy(strategy string) (bool, string) {
 		}
 	}
 	return false, "strategy 必须是 round-robin、weighted 或 random 之一"
-}
-
-func validateNodeIDs(nodeIDs string) (bool, string) {
-	if nodeIDs == "" {
-		return false, "node_ids 不能为空"
-	}
-	var arr []uint
-	if err := json.Unmarshal([]byte(nodeIDs), &arr); err != nil {
-		return false, "node_ids 必须是有效的 JSON 数组格式，如 [1,2,3]"
-	}
-	if len(arr) == 0 {
-		return false, "node_ids 必须至少包含一个节点 ID"
-	}
-	return true, ""
 }
 
 func validateOriginURL(origin string) (bool, string) {
@@ -181,7 +166,11 @@ func CreateRule(db *gorm.DB) gin.HandlerFunc {
 			CacheControlOverride string           `json:"cache_control_override"`
 			BypassCache          bool             `json:"bypass_cache"`
 			ResponseHeaderRules  string           `json:"response_header_rules"`
+			RequestHeaderRules   string           `json:"request_header_rules"`
+			RewriteFrom          string           `json:"rewrite_from"`
+			RewriteTo            string           `json:"rewrite_to"`
 			LuaScript            string           `json:"lua_script"`
+			ScriptTimeoutMs      *int             `json:"script_timeout_ms"`
 			Clusters             []ClusterBinding `json:"clusters"`
 		}
 
@@ -227,10 +216,8 @@ func CreateRule(db *gorm.DB) gin.HandlerFunc {
 				return
 			}
 			if len(body.Clusters) == 0 {
-				if ok, errMsg := validateNodeIDs(body.NodeIDs); !ok {
-					c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
-					return
-				}
+				c.JSON(http.StatusBadRequest, gin.H{"error": "请至少选择一个关联集群"})
+				return
 			}
 			if ok, errMsg := validateOriginURL(body.OriginBaseURL); !ok {
 				c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
@@ -244,7 +231,11 @@ func CreateRule(db *gorm.DB) gin.HandlerFunc {
 			rule.CacheControlOverride = body.CacheControlOverride
 			rule.BypassCache = body.BypassCache
 			rule.ResponseHeaderRules = body.ResponseHeaderRules
+			rule.RequestHeaderRules = body.RequestHeaderRules
+			rule.RewriteFrom = body.RewriteFrom
+			rule.RewriteTo = body.RewriteTo
 			rule.LuaScript = body.LuaScript
+			rule.ScriptTimeoutMs = body.ScriptTimeoutMs
 		} else {
 			if body.MatchType == "" {
 				body.MatchType = "prefix"
@@ -331,7 +322,11 @@ func UpdateRule(db *gorm.DB) gin.HandlerFunc {
 			CacheControlOverride *string          `json:"cache_control_override"`
 			BypassCache          *bool            `json:"bypass_cache"`
 			ResponseHeaderRules  *string          `json:"response_header_rules"`
+			RequestHeaderRules   *string          `json:"request_header_rules"`
+			RewriteFrom          *string          `json:"rewrite_from"`
+			RewriteTo            *string          `json:"rewrite_to"`
 			LuaScript            *string          `json:"lua_script"`
+			ScriptTimeoutMs      *int             `json:"script_timeout_ms"`
 			Clusters             []ClusterBinding `json:"clusters"`
 		}
 
@@ -373,10 +368,6 @@ func UpdateRule(db *gorm.DB) gin.HandlerFunc {
 				rule.Strategy = *body.Strategy
 			}
 			if body.NodeIDs != nil {
-				if ok, errMsg := validateNodeIDs(*body.NodeIDs); !ok {
-					c.JSON(http.StatusBadRequest, gin.H{"error": errMsg})
-					return
-				}
 				rule.NodeIDs = *body.NodeIDs
 			}
 			if body.OriginBaseURL != nil {
@@ -398,8 +389,20 @@ func UpdateRule(db *gorm.DB) gin.HandlerFunc {
 			if body.ResponseHeaderRules != nil {
 				rule.ResponseHeaderRules = *body.ResponseHeaderRules
 			}
+			if body.RequestHeaderRules != nil {
+				rule.RequestHeaderRules = *body.RequestHeaderRules
+			}
+			if body.RewriteFrom != nil {
+				rule.RewriteFrom = *body.RewriteFrom
+			}
+			if body.RewriteTo != nil {
+				rule.RewriteTo = *body.RewriteTo
+			}
 			if body.LuaScript != nil {
 				rule.LuaScript = *body.LuaScript
+			}
+			if body.ScriptTimeoutMs != nil {
+				rule.ScriptTimeoutMs = body.ScriptTimeoutMs
 			}
 		} else {
 			if body.Domain != nil {
